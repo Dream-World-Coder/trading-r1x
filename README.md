@@ -1,4 +1,4 @@
-# Trading-R1 — Reasoning Trace Prediction Market
+# Trading-R1x Reasoning Trace Prediction Market
 
 > *The AI's thought process is the product. Wager on whether the logic holds.*
 
@@ -64,7 +64,7 @@ registerTrace(bytes32 hash, string cid) → on-chain
 ## Repository Structure
 
 ```
-trading_r1/
+trading_r1x/
 │
 ├── phase1_reasoning_engine.py     # AI agent — LLM → JSON schema
 ├── phase2_storage_pipeline.py     # Hash + pin to IPFS

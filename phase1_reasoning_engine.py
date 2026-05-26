@@ -9,13 +9,11 @@ The reasoning *trace* itself is the product — not the final trade.
 
 import json
 import hashlib
-import time
+import os
 from datetime import datetime, timezone
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
-import anthropic  # pip install anthropic
-# For OpenAI: import openai
-
+from openai import OpenAI
 
 # ─── Schema Definition ────────────────────────────────────────────────────────
 
@@ -134,19 +132,21 @@ Inject this timestamp_utc into your response: {datetime.now(timezone.utc).isofor
 # ─── LLM Call ─────────────────────────────────────────────────────────────────
 
 def call_llm(system: str, user: str) -> str:
-    """
-    Call the Anthropic API.
-    Swap this function body for OpenAI if preferred.
-    """
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
-
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=2048,
-        system=system,
-        messages=[{"role": "user", "content": user}],
+    client = OpenAI(
+        api_key=os.getenv("GROQ_API_KEY"),
+        base_url="https://api.groq.com/openai/v1",  # Groq's OpenAI-compatible endpoint
     )
-    return message.content[0].text
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",   # or "mixtral-8x7b-32768", "gemma2-9b-it"
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user},
+        ],
+        temperature=0.2,     # lower = more deterministic JSON output
+        max_tokens=2048,
+        response_format={"type": "json_object"},  # Groq supports this — forces valid JSON
+    )
+    return response.choices[0].message.content
 
 
 def call_llm_mock(system: str, user: str) -> str:
@@ -246,18 +246,18 @@ if __name__ == "__main__":
         sentiment_score=-0.35,
     )
 
-    print("📡 Market Signal received")
+    print("Market Signal received")
     print(f"   Asset: {signal.asset} @ ${signal.price_usd:,.2f}\n")
 
     # Set use_mock=False and set ANTHROPIC_API_KEY to use the real API
     trace, json_output = generate_reasoning_trace(signal, use_mock=True)
 
-    print("🧠 Reasoning Trace generated:")
+    print("Reasoning Trace generated:")
     print(json_output)
-    print(f"\n✅ Validated | Action: {trace.action} | Conviction: {trace.conviction:.0%}")
+    print(f"\nValidated | Action: {trace.action} | Conviction: {trace.conviction:.0%}")
     print(f"   Trace ID: {trace.trace_id}")
 
     # Save for Phase 2
     with open("trace_output.json", "w") as f:
         f.write(json_output)
-    print("\n💾 Saved to trace_output.json")
+    print("\nSaved to trace_output.json")

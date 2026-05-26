@@ -229,9 +229,9 @@ def process_trace(
     assert verify_hash(canonical, receipt.sha256_hex), \
         "CRITICAL: Hash mismatch after pinning — do not proceed to on-chain write"
 
-    print(f"📌 IPFS CID:  {receipt.ipfs_cid}")
-    print(f"🌐 URL:       {receipt.ipfs_url}")
-    print(f"✅ Integrity verified — safe to write to Arc chain")
+    print(f"IPFS CID:  {receipt.ipfs_cid}")
+    print(f"URL:       {receipt.ipfs_url}")
+    print(f"Integrity verified — safe to write to Arc chain")
 
     return receipt
 
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     try:
         with open("trace_output.json") as f:
             trace_json_str = f.read()
-        print("📂 Loaded trace_output.json from Phase 1\n")
+        print("Loaded trace_output.json from Phase 1\n")
     except FileNotFoundError:
         # Minimal inline mock for standalone testing
         trace_json_str = json.dumps({
@@ -267,7 +267,7 @@ if __name__ == "__main__":
 
     receipt = process_trace(trace_json_str, mode="mock")
 
-    print("\n📄 Storage Receipt:")
+    print("\nStorage Receipt:")
     print(f"   sha256_hex  : {receipt.sha256_hex}")
     print(f"   ipfs_cid    : {receipt.ipfs_cid}")
     print(f"   ipfs_url    : {receipt.ipfs_url}")
@@ -284,4 +284,4 @@ if __name__ == "__main__":
             "byte_size":    receipt.byte_size,
             "pinned_at_utc": receipt.pinned_at_utc,
         }, f, indent=2)
-    print("\n💾 Saved to storage_receipt.json")
+    print("\nSaved to storage_receipt.json")
