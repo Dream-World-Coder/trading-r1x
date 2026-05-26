@@ -247,7 +247,7 @@ if __name__ == "__main__":
     )
 
     print("Market Signal received")
-    print(f"   Asset: {signal.asset} @ ${signal.price_usd:,.2f}\n")
+    print(f"Asset: {signal.asset} @ ${signal.price_usd:,.2f}\n")
 
     # Set use_mock=False and set ANTHROPIC_API_KEY to use the real API
     trace, json_output = generate_reasoning_trace(signal, use_mock=True)
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     print("Reasoning Trace generated:")
     print(json_output)
     print(f"\nValidated | Action: {trace.action} | Conviction: {trace.conviction:.0%}")
-    print(f"   Trace ID: {trace.trace_id}")
+    print(f"Trace ID: {trace.trace_id}")
 
     # Save for Phase 2
     with open("trace_output.json", "w") as f:

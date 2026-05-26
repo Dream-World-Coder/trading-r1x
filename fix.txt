@@ -1,0 +1,9 @@
+Each step in reasoning_trace must cite a specific data point from the input signal as evidence. This forces the model to ground its reasoning in the actual numbers, not generic market commentary.
+
+> how is this verified / checked?
+
+simple search or semgrep / tree sitter
+
+---
+CRITICAL: SHOULD FAIL IF I/P NOT REFERRED
+---

@@ -48,13 +48,13 @@ load_dotenv()
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-ARC_RPC_URL          = os.getenv("ARC_RPC_URL", "http://127.0.0.1:8545")
+ARC_RPC_URL = os.getenv("ARC_RPC_URL", "http://127.0.0.1:8545")
 DEPLOYER_PRIVATE_KEY = os.getenv("DEPLOYER_PRIVATE_KEY", "")
 MARKET_CONTRACT_ADDR = os.getenv("MARKET_CONTRACT", "")
 
 # Waging window: 24h for wagers to come in, 7 days to resolve
-WAGING_WINDOW_SECS      = 24 * 3_600
-RESOLUTION_WINDOW_SECS  = 7  * 24 * 3_600
+WAGING_WINDOW_SECS = 24 * 3_600
+RESOLUTION_WINDOW_SECS = 7 * 24 * 3_600
 
 # ─── Minimal ABI for registerTrace ────────────────────────────────────────────
 
@@ -187,14 +187,14 @@ def register_trace_on_chain(
     # Sign and send
     signed = account.sign_transaction(tx)
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    print(f"   📡 Tx broadcast: {tx_hash.hex()}")
+    print(f"Tx broadcast: {tx_hash.hex()}")
 
     # Wait for confirmation
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
     if receipt.status != 1:
         raise RuntimeError(f"Transaction reverted. Receipt: {receipt}")
 
-    print(f"   ✅ Confirmed in block {receipt.blockNumber}")
+    print(f"Confirmed in block {receipt.blockNumber}")
     return {
         "tx_hash":      tx_hash.hex(),
         "block_number": receipt.blockNumber,
@@ -293,7 +293,7 @@ def run_continuous(interval_seconds: int = 3_600):
     """
     import random
 
-    print(f"🔄 Continuous mode: generating a trace every {interval_seconds}s")
+    print(f"Continuous mode: generating a trace every {interval_seconds}s")
     run_count = 0
 
     while True:
@@ -322,9 +322,9 @@ def run_continuous(interval_seconds: int = 3_600):
             out = f"pipeline_receipt_{run_count:04d}.json"
             with open(out, "w") as f:
                 json.dump(receipt.__dict__, f, indent=2)
-            print(f"💾 Saved {out}")
+            print(f"Saved {out}")
         except Exception as exc:
-            print(f"⚠️  Pipeline error (run #{run_count}): {exc}")
+            print(f"Pipeline error (run #{run_count}): {exc}")
 
         time.sleep(interval_seconds)
 
