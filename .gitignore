@@ -1,0 +1,11 @@
+.env
+.env*
+
+.venv
+venv
+node_modules
+
+.idea
+.vscode
+.ropeproject
+.DS_Store
