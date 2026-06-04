@@ -1,287 +1,192 @@
-"""
-Trading-R1: Phase 2 - Immutable Storage Pipeline
-=================================================
-Takes the validated JSON from Phase 1, hashes it deterministically,
-and pins it to IPFS via Pinata. Returns the CID and SHA-256 hash
-that will be written to the Arc smart contract in Phase 3.
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
 
-Install deps:
-    pip install requests python-dotenv
-"""
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-import hashlib
-import json
-import os
-import time
-from dataclasses import dataclass
-from typing import Optional
-import requests
-from dotenv import load_dotenv
+contract TradeReasoningMarket is Ownable {
+    IERC20 public usdc;
+    uint256 public protocolFeeBalance;
 
-load_dotenv()
+    uint256 public constant MIN_WAGER = 1e6; // 1 USDC (assuming 6 decimals)
+    uint256 public constant MAX_WAGER = 10000 * 1e6; // 10,000 USDC
 
-# ─── Configuration ────────────────────────────────────────────────────────────
-
-PINATA_API_KEY    = os.getenv("PINATA_API_KEY", "")
-PINATA_API_SECRET = os.getenv("PINATA_API_SECRET", "")
-PINATA_JWT        = os.getenv("PINATA_JWT", "")          # preferred auth method
-
-PINATA_PIN_URL  = "https://api.pinata.cloud/pinning/pinJSONToIPFS"
-PINATA_GATE_URL = "https://gateway.pinata.cloud/ipfs"
-
-# Irys (formerly Bundlr) — alternative permanent storage on Arweave
-IRYS_NODE_URL = "https://node1.irys.xyz"
-
-
-# ─── Data Structures ──────────────────────────────────────────────────────────
-
-@dataclass
-class StorageReceipt:
-    """
-    Everything needed to anchor this trace on-chain.
-    sha256_hex → stored in the smart contract as the primary key.
-    ipfs_cid   → used to retrieve the full JSON from IPFS.
-    """
-    sha256_hex: str          # deterministic hash of canonical JSON
-    ipfs_cid: str            # IPFS Content Identifier (CIDv1 preferred)
-    ipfs_url: str            # human-readable gateway URL
-    pinata_tx_id: str        # Pinata pin ID for management
-    byte_size: int           # size of the pinned payload
-    pinned_at_utc: str       # ISO timestamp of the pin operation
-
-
-# ─── Hashing ──────────────────────────────────────────────────────────────────
-
-def canonical_json_bytes(trace_dict: dict) -> bytes:
-    """
-    Produce a *deterministic* byte representation of the JSON.
-    Rules:
-      - sort_keys=True  → key order is always alphabetical
-      - separators      → no trailing spaces (compact)
-      - ensure_ascii    → normalise any unicode
-    This is the byte string we hash AND pin — they must be identical.
-    """
-    return json.dumps(
-        trace_dict,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
-
-
-def sha256_hash(data: bytes) -> str:
-    """Returns the lowercase hex SHA-256 digest of `data`."""
-    return hashlib.sha256(data).hexdigest()
-
-
-def verify_hash(data: bytes, expected_hex: str) -> bool:
-    """
-    Re-derive the hash and compare. Call this before any on-chain write
-    to guarantee the payload hasn't mutated in transit.
-    """
-    return sha256_hash(data) == expected_hex
-
-
-# ─── IPFS via Pinata ──────────────────────────────────────────────────────────
-
-def pin_to_ipfs_pinata(
-    trace_dict: dict,
-    sha256_hex: str,
-    name: str = "trading-r1-trace",
-) -> StorageReceipt:
-    """
-    Pins the canonical JSON to IPFS via Pinata.
-
-    The payload sent to Pinata is:
-        { "pinataContent": <trace_dict>, "pinataMetadata": { ... } }
-
-    Pinata returns a CID that is derived from the content — meaning
-    the same JSON bytes always produce the same CID (content-addressable).
-    """
-    headers = {
-        "Content-Type": "application/json",
+    struct Trace {
+        address creator;
+        string ipfsCid;
+        uint256 wagingDeadline;
+        uint256 resolutionDeadline;
+        uint256 profitPool;
+        uint256 lossPool;
+        bool resolved;
+        bool wasProfitable;
     }
-    if PINATA_JWT:
-        headers["Authorization"] = f"Bearer {PINATA_JWT}"
-    else:
-        headers["pinata_api_key"]    = PINATA_API_KEY
-        headers["pinata_secret_api_key"] = PINATA_API_SECRET
 
-    payload = {
-        "pinataContent": trace_dict,       # Pinata will canonicalise this
-        "pinataMetadata": {
-            "name": f"{name}-{sha256_hex[:12]}",
-            "keyvalues": {
-                "sha256": sha256_hex,
-                "schema_version": trace_dict.get("schema_version", ""),
-                "asset": trace_dict.get("asset", ""),
-                "action": trace_dict.get("action", ""),
-            }
-        },
-        "pinataOptions": {
-            "cidVersion": 1,               # CIDv1 — more portable, base32
+    mapping(bytes32 => Trace) public traces;
+    mapping(bytes32 => mapping(address => uint256)) public profitWagers;
+    mapping(bytes32 => mapping(address => uint256)) public lossWagers;
+    mapping(bytes32 => mapping(address => bool)) public hasClaimed;
+
+    event TraceRegistered(
+        bytes32 indexed hash,
+        string cid,
+        address indexed creator,
+        uint256 wagingDeadline
+    );
+    event WagerPlaced(
+        bytes32 indexed hash,
+        address indexed user,
+        uint256 amount,
+        bool isProfit
+    );
+    event TraceResolved(
+        bytes32 indexed hash,
+        bool wasProfitable,
+        uint256 profitPool,
+        uint256 lossPool
+    );
+    event WinningsClaimed(
+        bytes32 indexed hash,
+        address indexed user,
+        uint256 amount
+    );
+
+    error TraceAlreadyRegistered();
+    error InvalidDeadlines();
+    error WagingClosed();
+    error AlreadyWagered();
+    error WagerBelowMinimum();
+    error WagerAboveMaximum();
+    error TraceAlreadyResolved();
+    error TraceNotResolved();
+    error NothingToClaim();
+    error AlreadyClaimed();
+
+    constructor(address _usdc) Ownable(msg.sender) {
+        usdc = IERC20(_usdc);
+    }
+
+    function registerTrace(
+        bytes32 hash,
+        string calldata cid,
+        uint256 wagingWindow,
+        uint256 resolutionWindow
+    ) external {
+        if (traces[hash].creator != address(0)) revert TraceAlreadyRegistered();
+        if (wagingWindow == 0) revert InvalidDeadlines();
+
+        uint256 wDeadline = block.timestamp + wagingWindow;
+        traces[hash] = Trace({
+            creator: msg.sender,
+            ipfsCid: cid,
+            wagingDeadline: wDeadline,
+            resolutionDeadline: block.timestamp + resolutionWindow,
+            profitPool: 0,
+            lossPool: 0,
+            resolved: false,
+            wasProfitable: false
+        });
+
+        emit TraceRegistered(hash, cid, msg.sender, wDeadline);
+    }
+
+    function placeWager(bytes32 hash, bool isProfit, uint256 amount) external {
+        Trace storage trace = traces[hash];
+        if (block.timestamp > trace.wagingDeadline) revert WagingClosed();
+        if (amount < MIN_WAGER) revert WagerBelowMinimum();
+        if (amount > MAX_WAGER) revert WagerAboveMaximum();
+        if (
+            profitWagers[hash][msg.sender] > 0 ||
+            lossWagers[hash][msg.sender] > 0
+        ) revert AlreadyWagered();
+
+        usdc.transferFrom(msg.sender, address(this), amount);
+
+        if (isProfit) {
+            profitWagers[hash][msg.sender] = amount;
+            trace.profitPool += amount;
+        } else {
+            lossWagers[hash][msg.sender] = amount;
+            trace.lossPool += amount;
         }
+
+        emit WagerPlaced(hash, msg.sender, amount, isProfit);
     }
 
-    response = requests.post(PINATA_PIN_URL, json=payload, headers=headers, timeout=30)
-    response.raise_for_status()
-    result = response.json()
+    function resolveTrace(bytes32 hash, bool profitable) external onlyOwner {
+        Trace storage trace = traces[hash];
+        if (trace.resolved) revert TraceAlreadyResolved();
 
-    cid      = result["IpfsHash"]
-    pin_size = result["PinSize"]
-    ts       = result["Timestamp"]
+        trace.resolved = true;
+        trace.wasProfitable = profitable;
 
-    return StorageReceipt(
-        sha256_hex=sha256_hex,
-        ipfs_cid=cid,
-        ipfs_url=f"{PINATA_GATE_URL}/{cid}",
-        pinata_tx_id=result.get("id", cid),
-        byte_size=pin_size,
-        pinned_at_utc=ts,
-    )
+        emit TraceResolved(hash, profitable, trace.profitPool, trace.lossPool);
+    }
 
+    function previewPayout(
+        bytes32 hash,
+        bool isProfit,
+        uint256 userStake
+    ) public view returns (uint256) {
+        Trace memory trace = traces[hash];
 
-# ─── IPFS via public HTTP API (fallback / dev mode) ───────────────────────────
+        if (trace.profitPool == 0 || trace.lossPool == 0) {
+            return userStake; // Refund if no opposing bets
+        }
 
-def pin_to_ipfs_local(trace_dict: dict, sha256_hex: str) -> StorageReceipt:
-    """
-    Fallback: use a locally running IPFS daemon (kubo).
-    Useful for development without Pinata credentials.
+        uint256 loserPool = isProfit ? trace.lossPool : trace.profitPool;
+        uint256 winnerPool = isProfit ? trace.profitPool : trace.lossPool;
 
-    Start daemon: ipfs daemon
-    """
-    LOCAL_API = "http://127.0.0.1:5001/api/v0/add"
-    canonical = canonical_json_bytes(trace_dict)
-    files = {"file": ("trace.json", canonical, "application/json")}
-    response = requests.post(LOCAL_API, files=files, timeout=10)
-    response.raise_for_status()
-    result = response.json()
-    cid = result["Hash"]
+        uint256 fee = (loserPool * 2) / 100;
+        uint256 distributable = loserPool - fee;
 
-    return StorageReceipt(
-        sha256_hex=sha256_hex,
-        ipfs_cid=cid,
-        ipfs_url=f"https://ipfs.io/ipfs/{cid}",
-        pinata_tx_id="local",
-        byte_size=len(canonical),
-        pinned_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    )
+        return userStake + ((userStake * distributable) / winnerPool);
+    }
 
+    function claimWinnings(bytes32 hash) external {
+        Trace storage trace = traces[hash];
+        if (!trace.resolved) revert TraceNotResolved();
+        if (hasClaimed[hash][msg.sender]) revert AlreadyClaimed();
 
-# ─── Mock (no network) ────────────────────────────────────────────────────────
+        uint256 userStake = trace.wasProfitable
+            ? profitWagers[hash][msg.sender]
+            : lossWagers[hash][msg.sender];
 
-def pin_to_ipfs_mock(trace_dict: dict, sha256_hex: str) -> StorageReceipt:
-    """
-    Returns a deterministic mock receipt. Zero network calls.
-    CID is fake but the sha256_hex is real — safe for on-chain testing.
-    """
-    canonical = canonical_json_bytes(trace_dict)
-    fake_cid = "bafybeig" + sha256_hex[:44]   # CIDv1 prefix + hash stub
+        // Check for refund scenario (no opposing bets) before asserting win/loss
+        if (trace.profitPool == 0 || trace.lossPool == 0) {
+            userStake = profitWagers[hash][msg.sender] > 0
+                ? profitWagers[hash][msg.sender]
+                : lossWagers[hash][msg.sender];
+        } else if (userStake == 0) {
+            revert NothingToClaim();
+        }
 
-    return StorageReceipt(
-        sha256_hex=sha256_hex,
-        ipfs_cid=fake_cid,
-        ipfs_url=f"https://gateway.pinata.cloud/ipfs/{fake_cid}",
-        pinata_tx_id="mock-pin-" + sha256_hex[:8],
-        byte_size=len(canonical),
-        pinned_at_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    )
+        hasClaimed[hash][msg.sender] = true;
+        uint256 payout = previewPayout(hash, trace.wasProfitable, userStake);
 
+        if (trace.profitPool > 0 && trace.lossPool > 0) {
+            uint256 loserPool = trace.wasProfitable
+                ? trace.lossPool
+                : trace.profitPool;
+            uint256 winnerPool = trace.wasProfitable
+                ? trace.profitPool
+                : trace.lossPool;
+            uint256 fee = (loserPool * 2) / 100;
+            // Only add to protocol balance proportionately to avoid rounding errors locking funds
+            protocolFeeBalance += (fee * userStake) / winnerPool;
+        }
 
-# ─── Main Pipeline ────────────────────────────────────────────────────────────
+        usdc.transfer(msg.sender, payout);
+        emit WinningsClaimed(hash, msg.sender, payout);
+    }
 
-def process_trace(
-    trace_json_str: str,
-    mode: str = "mock",          # "pinata" | "local" | "mock"
-) -> StorageReceipt:
-    """
-    Full Phase 2 pipeline:
-      1. Parse the JSON string from Phase 1
-      2. Re-serialise to canonical bytes (sort_keys, compact)
-      3. SHA-256 hash those bytes
-      4. Pin to IPFS
-      5. Verify hash integrity post-pin
-      6. Return StorageReceipt for Phase 3
+    function withdrawProtocolFees(address to) external onlyOwner {
+        uint256 amount = protocolFeeBalance;
+        protocolFeeBalance = 0;
+        usdc.transfer(to, amount);
+    }
 
-    Args:
-        trace_json_str: The raw JSON string output from Phase 1.
-        mode: Which pinning backend to use.
-    """
-    # Step 1: Parse
-    trace_dict = json.loads(trace_json_str)
-
-    # Step 2: Canonical bytes
-    canonical = canonical_json_bytes(trace_dict)
-
-    # Step 3: Hash
-    sha256_hex = sha256_hash(canonical)
-    print(f"🔐 SHA-256: {sha256_hex}")
-
-    # Step 4: Pin
-    if mode == "pinata":
-        receipt = pin_to_ipfs_pinata(trace_dict, sha256_hex)
-    elif mode == "local":
-        receipt = pin_to_ipfs_local(trace_dict, sha256_hex)
-    else:
-        receipt = pin_to_ipfs_mock(trace_dict, sha256_hex)
-
-    # Step 5: Integrity check
-    assert verify_hash(canonical, receipt.sha256_hex), \
-        "CRITICAL: Hash mismatch after pinning — do not proceed to on-chain write"
-
-    print(f"📌 IPFS CID:  {receipt.ipfs_cid}")
-    print(f"🌐 URL:       {receipt.ipfs_url}")
-    print(f"✅ Integrity verified — safe to write to Arc chain")
-
-    return receipt
-
-
-# ─── CLI ──────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # Load output from Phase 1
-    try:
-        with open("trace_output.json") as f:
-            trace_json_str = f.read()
-        print("📂 Loaded trace_output.json from Phase 1\n")
-    except FileNotFoundError:
-        # Minimal inline mock for standalone testing
-        trace_json_str = json.dumps({
-            "schema_version": "1.0.0",
-            "trace_id": "abc123",
-            "asset": "BTC/USDC",
-            "timestamp_utc": "2025-01-01T00:00:00+00:00",
-            "regime": "NEUTRAL",
-            "reasoning_trace": [
-                {"step": 1, "thought": "RSI neutral", "evidence": "RSI=52"},
-                {"step": 2, "thought": "Vol normal",  "evidence": "Vol=40%"},
-                {"step": 3, "thought": "Hold advised", "evidence": "No edge"},
-            ],
-            "action": "HOLD",
-            "conviction": 0.5,
-            "rationale_summary": "Neutral regime, no edge.",
-            "suggested_position_size_pct": 0.0,
-            "stop_loss_pct": 4.0,
-            "take_profit_pct": 6.0,
-        })
-
-    receipt = process_trace(trace_json_str, mode="mock")
-
-    print("\n📄 Storage Receipt:")
-    print(f"   sha256_hex  : {receipt.sha256_hex}")
-    print(f"   ipfs_cid    : {receipt.ipfs_cid}")
-    print(f"   ipfs_url    : {receipt.ipfs_url}")
-    print(f"   byte_size   : {receipt.byte_size} bytes")
-    print(f"   pinned_at   : {receipt.pinned_at_utc}")
-
-    # Save receipt for Phase 3
-    with open("storage_receipt.json", "w") as f:
-        json.dump({
-            "sha256_hex":   receipt.sha256_hex,
-            "ipfs_cid":     receipt.ipfs_cid,
-            "ipfs_url":     receipt.ipfs_url,
-            "pinata_tx_id": receipt.pinata_tx_id,
-            "byte_size":    receipt.byte_size,
-            "pinned_at_utc": receipt.pinned_at_utc,
-        }, f, indent=2)
-    print("\n💾 Saved to storage_receipt.json")
+    function getTrace(bytes32 hash) external view returns (Trace memory) {
+        return traces[hash];
+    }
+}

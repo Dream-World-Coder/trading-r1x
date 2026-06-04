@@ -379,4 +379,4 @@ if __name__ == "__main__":
         out_path = "pipeline_receipt.json"
         with open(out_path, "w") as f:
             json.dump(receipt.__dict__, f, indent=2)
-        print(f"\n💾 Full receipt saved to {out_path}")
+        print(f"\nFull receipt saved to {out_path}")

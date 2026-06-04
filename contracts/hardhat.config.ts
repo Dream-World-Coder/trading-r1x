@@ -26,20 +26,18 @@ const config: HardhatUserConfig = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200, // optimise for deployment cost vs call cost balance
+        runs: 200,
       },
-      viaIR: true, // enables the Yul IR pipeline — better optimisation
+      viaIR: true,
     },
   },
   networks: {
-    // Local development node
     hardhat: {
       chainId: 31337,
     },
-    // Arc L1 testnet — update chainId when Arc publishes
     arc_testnet: {
       url: ARC_RPC_URL,
-      chainId: 12_345, // placeholder
+      chainId: 5042002, // Corrected Chain ID
       accounts: DEPLOYER_PRIVATE_KEY ? [DEPLOYER_PRIVATE_KEY] : [],
       gasPrice: "auto",
     },
@@ -51,10 +49,10 @@ const config: HardhatUserConfig = {
     customChains: [
       {
         network: "arc_testnet",
-        chainId: 12_345,
+        chainId: 5042002, // Chain ID
         urls: {
-          apiURL: `${ARC_EXPLORER_URL}/api`,
-          browserURL: ARC_EXPLORER_URL,
+          apiURL: "https://testnet.arcscan.app/api",
+          browserURL: "https://testnet.arcscan.app",
         },
       },
     ],

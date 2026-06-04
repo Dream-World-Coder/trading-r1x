@@ -11,6 +11,7 @@ import json
 import os
 from datetime import datetime, timezone
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
 from schema.marketsignal import MarketSignal
@@ -18,6 +19,8 @@ from schema.reasoningtrace import ReasoningTrace
 from utils.hash import compute_signal_id
 from utils.mock import call_llm_mock
 from utils.prompts import SYSTEM_PROMPT
+
+load_dotenv()
 
 
 # Signal → Trace ID

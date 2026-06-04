@@ -12,92 +12,58 @@ import { defineChain } from "viem";
 import { injected, walletConnect } from "wagmi/connectors";
 
 // ─── Arc Testnet Chain Definition ─────────────────────────────────────────────
-// Replace RPC_URL and chain IDs when Arc publishes official testnet details.
 
 export const arcTestnet = defineChain({
-  id: 12_345, // placeholder — update when Arc publishes
-  name: "Arc Testnet",
-  nativeCurrency: {
-    decimals: 18,
-    name: "Arc",
-    symbol: "ARC",
-  },
-  rpcUrls: {
-    default: {
-      http: [
-        process.env.NEXT_PUBLIC_ARC_RPC_URL ??
-          "https://rpc.arc-testnet.example.com",
-      ],
+    id: 5042002,
+    name: "Arc Testnet",
+    nativeCurrency: {
+        decimals: 18,
+        name: "Arc",
+        symbol: "ARC",
     },
-  },
-  blockExplorers: {
-    default: {
-      name: "Arc Explorer",
-      url:
-        process.env.NEXT_PUBLIC_ARC_EXPLORER_URL ??
-        "https://explorer.arc-testnet.example.com",
+    rpcUrls: {
+        default: {
+            http: [
+                process.env.NEXT_PUBLIC_ARC_RPC_URL ??
+                    "https://rpc.testnet.arc-node.thecanteenapp.com/v1/swrm_96a9869e5695443d0ccf51e1e5676711343c3482715b38881f5a79c4154f2017",
+            ],
+        },
     },
-  },
-  testnet: true,
+    blockExplorers: {
+        default: {
+            name: "ArcScan",
+            url:
+                process.env.NEXT_PUBLIC_ARC_EXPLORER_URL ??
+                "https://testnet.arcscan.app",
+        },
+    },
+    testnet: true,
 });
 
 // ─── WalletConnect Project ID ─────────────────────────────────────────────────
-// Get yours at https://cloud.walletconnect.com — required for mobile wallets.
 
 const WC_PROJECT_ID = process.env.NEXT_PUBLIC_WC_PROJECT_ID ?? "";
 
 // ─── Wagmi Config ─────────────────────────────────────────────────────────────
 
 export const wagmiConfig = createConfig({
-  chains: [arcTestnet],
-  connectors: [
-    injected(), // MetaMask / browser wallet
-    walletConnect({ projectId: WC_PROJECT_ID }),
-  ],
-  transports: {
-    [arcTestnet.id]: http(),
-  },
-  ssr: true, // required for Next.js App Router
+    chains: [arcTestnet],
+    connectors: [
+        injected(), // MetaMask / browser wallet
+        // Only initialize WalletConnect if a Project ID is provided
+        ...(WC_PROJECT_ID ? [walletConnect({ projectId: WC_PROJECT_ID })] : []),
+    ],
+    transports: {
+        [arcTestnet.id]: http(),
+    },
+    ssr: true, // required for Next.js App Router
 });
 
-// ─── Contract Addresses (set after deployment) ────────────────────────────────
+// ─── Contract Addresses ───────────────────────────────────────────────────────
 
 export const CONTRACT_ADDRESSES = {
-  TradeReasoningMarket: (process.env.NEXT_PUBLIC_MARKET_CONTRACT ??
-    "0x0") as `0x${string}`,
-  USDC: (process.env.NEXT_PUBLIC_USDC_ADDRESS ?? "0x0") as `0x${string}`,
+    TradeReasoningMarket: (process.env.NEXT_PUBLIC_MARKET_CONTRACT ??
+        "0xb25b94C6A080e1BAD6DaFc1A00A49821AA431c7c") as `0x${string}`,
+    USDC: (process.env.NEXT_PUBLIC_USDC_ADDRESS ??
+        "0xE3400df21263e096E107D526742587a83901b9E2") as `0x${string}`,
 } as const;
-
-
-// -------------------------
-// gemini
-// -------------------------
-import { defineChain } from 'viem'
-import { http, createConfig } from 'wagmi'
-import { injected } from 'wagmi/connectors'
-
-export const arcTestnet = defineChain({
-  id: 5042002,[cite: 2]
-  name: 'Arc Testnet',[cite: 2]
-  nativeCurrency: {
-    decimals: 18,
-    name: 'USDC',[cite: 2]
-    symbol: 'USDC',[cite: 2]
-  },
-  rpcUrls: {
-    default: {
-      http: ['https://rpc.testnet.arc-node.thecanteenapp.com/v1/swrm_96a9869e5695443d0ccf51e1e5676711343c3482715b38881f5a79c4154f2017'],[cite: 2]
-    },
-  },
-  blockExplorers: {
-    default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' },[cite: 2]
-  },
-})
-
-export const config = createConfig({
-  chains: [arcTestnet],
-  transports: {
-    [arcTestnet.id]: http(),
-  },
-  connectors: [injected()],
-})
