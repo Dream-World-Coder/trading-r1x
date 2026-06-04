@@ -67,3 +67,37 @@ export const CONTRACT_ADDRESSES = {
     "0x0") as `0x${string}`,
   USDC: (process.env.NEXT_PUBLIC_USDC_ADDRESS ?? "0x0") as `0x${string}`,
 } as const;
+
+
+// -------------------------
+// gemini
+// -------------------------
+import { defineChain } from 'viem'
+import { http, createConfig } from 'wagmi'
+import { injected } from 'wagmi/connectors'
+
+export const arcTestnet = defineChain({
+  id: 5042002,[cite: 2]
+  name: 'Arc Testnet',[cite: 2]
+  nativeCurrency: {
+    decimals: 18,
+    name: 'USDC',[cite: 2]
+    symbol: 'USDC',[cite: 2]
+  },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.testnet.arc-node.thecanteenapp.com/v1/swrm_96a9869e5695443d0ccf51e1e5676711343c3482715b38881f5a79c4154f2017'],[cite: 2]
+    },
+  },
+  blockExplorers: {
+    default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' },[cite: 2]
+  },
+})
+
+export const config = createConfig({
+  chains: [arcTestnet],
+  transports: {
+    [arcTestnet.id]: http(),
+  },
+  connectors: [injected()],
+})

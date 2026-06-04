@@ -14,26 +14,26 @@ import json
 import os
 import time
 from dataclasses import dataclass
+
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─── Configuration ────────────────────────────────────────────────────────────
+# Configurations
 
-PINATA_API_KEY    = os.getenv("PINATA_API_KEY", "")
+PINATA_API_KEY = os.getenv("PINATA_API_KEY", "")
 PINATA_API_SECRET = os.getenv("PINATA_API_SECRET", "")
-PINATA_JWT        = os.getenv("PINATA_JWT", "")          # preferred auth method
+PINATA_JWT = os.getenv("PINATA_JWT", "")  # preferred auth method
 
-PINATA_PIN_URL  = "https://api.pinata.cloud/pinning/pinJSONToIPFS"
+PINATA_PIN_URL = "https://api.pinata.cloud/pinning/pinJSONToIPFS"
 PINATA_GATE_URL = "https://gateway.pinata.cloud/ipfs"
 
 # Irys (formerly Bundlr) — alternative permanent storage on Arweave
 IRYS_NODE_URL = "https://node1.irys.xyz"
 
 
-# ─── Data Structures ──────────────────────────────────────────────────────────
-
+# Data Structures
 @dataclass
 class StorageReceipt:
     """
@@ -41,19 +41,19 @@ class StorageReceipt:
     sha256_hex → stored in the smart contract as the primary key.
     ipfs_cid   → used to retrieve the full JSON from IPFS.
     """
-    sha256_hex: str          # deterministic hash of canonical JSON
-    ipfs_cid: str            # IPFS Content Identifier (CIDv1 preferred)
-    ipfs_url: str            # human-readable gateway URL
-    pinata_tx_id: str        # Pinata pin ID for management
-    byte_size: int           # size of the pinned payload
-    pinned_at_utc: str       # ISO timestamp of the pin operation
+
+    sha256_hex: str  # deterministic hash of canonical JSON
+    ipfs_cid: str  # IPFS Content Identifier (CIDv1 preferred)
+    ipfs_url: str  # human-readable gateway URL
+    pinata_tx_id: str  # Pinata pin ID for management
+    byte_size: int  # size of the pinned payload
+    pinned_at_utc: str  # ISO timestamp of the pin operation
 
 
-# ─── Hashing ──────────────────────────────────────────────────────────────────
-
+# Hashing
 def canonical_json_bytes(trace_dict: dict) -> bytes:
     """
-    Produce a *deterministic* byte representation of the JSON.
+    Produce a deterministic byte representation of the JSON.
     Rules:
       - sort_keys=True  → key order is always alphabetical
       - separators      → no trailing spaces (compact)
@@ -81,8 +81,7 @@ def verify_hash(data: bytes, expected_hex: str) -> bool:
     return sha256_hash(data) == expected_hex
 
 
-# ─── IPFS via Pinata ──────────────────────────────────────────────────────────
-
+# IPFS via Pinata
 def pin_to_ipfs_pinata(
     trace_dict: dict,
     sha256_hex: str,
@@ -103,11 +102,11 @@ def pin_to_ipfs_pinata(
     if PINATA_JWT:
         headers["Authorization"] = f"Bearer {PINATA_JWT}"
     else:
-        headers["pinata_api_key"]    = PINATA_API_KEY
+        headers["pinata_api_key"] = PINATA_API_KEY
         headers["pinata_secret_api_key"] = PINATA_API_SECRET
 
     payload = {
-        "pinataContent": trace_dict,       # Pinata will canonicalise this
+        "pinataContent": trace_dict,  # Pinata will canonicalise this
         "pinataMetadata": {
             "name": f"{name}-{sha256_hex[:12]}",
             "keyvalues": {
@@ -115,20 +114,20 @@ def pin_to_ipfs_pinata(
                 "schema_version": trace_dict.get("schema_version", ""),
                 "asset": trace_dict.get("asset", ""),
                 "action": trace_dict.get("action", ""),
-            }
+            },
         },
         "pinataOptions": {
-            "cidVersion": 1,               # CIDv1 — more portable, base32
-        }
+            "cidVersion": 1,  # CIDv1 — more portable, base32
+        },
     }
 
     response = requests.post(PINATA_PIN_URL, json=payload, headers=headers, timeout=30)
     response.raise_for_status()
     result = response.json()
 
-    cid      = result["IpfsHash"]
+    cid = result["IpfsHash"]
     pin_size = result["PinSize"]
-    ts       = result["Timestamp"]
+    ts = result["Timestamp"]
 
     return StorageReceipt(
         sha256_hex=sha256_hex,
@@ -140,8 +139,7 @@ def pin_to_ipfs_pinata(
     )
 
 
-# ─── IPFS via public HTTP API (fallback / dev mode) ───────────────────────────
-
+# IPFS via public HTTP API (fallback / dev mode)
 def pin_to_ipfs_local(trace_dict: dict, sha256_hex: str) -> StorageReceipt:
     """
     Fallback: use a locally running IPFS daemon (kubo).
@@ -167,15 +165,14 @@ def pin_to_ipfs_local(trace_dict: dict, sha256_hex: str) -> StorageReceipt:
     )
 
 
-# ─── Mock (no network) ────────────────────────────────────────────────────────
-
+# Mock (no network)
 def pin_to_ipfs_mock(trace_dict: dict, sha256_hex: str) -> StorageReceipt:
     """
     Returns a deterministic mock receipt. Zero network calls.
     CID is fake but the sha256_hex is real — safe for on-chain testing.
     """
     canonical = canonical_json_bytes(trace_dict)
-    fake_cid = "bafybeig" + sha256_hex[:44]   # CIDv1 prefix + hash stub
+    fake_cid = "bafybeig" + sha256_hex[:44]  # CIDv1 prefix + hash stub
 
     return StorageReceipt(
         sha256_hex=sha256_hex,
@@ -187,11 +184,10 @@ def pin_to_ipfs_mock(trace_dict: dict, sha256_hex: str) -> StorageReceipt:
     )
 
 
-# ─── Main Pipeline ────────────────────────────────────────────────────────────
-
+# Main Pipeline
 def process_trace(
     trace_json_str: str,
-    mode: str = "mock",          # "pinata" | "local" | "mock"
+    mode: str = "mock",  # "pinata" | "local" | "mock"
 ) -> StorageReceipt:
     """
     Full Phase 2 pipeline:
@@ -225,8 +221,9 @@ def process_trace(
         receipt = pin_to_ipfs_mock(trace_dict, sha256_hex)
 
     # Step 5: Integrity check
-    assert verify_hash(canonical, receipt.sha256_hex), \
+    assert verify_hash(canonical, receipt.sha256_hex), (
         "CRITICAL: Hash mismatch after pinning — do not proceed to on-chain write"
+    )
 
     print(f"IPFS CID:  {receipt.ipfs_cid}")
     print(f"URL:       {receipt.ipfs_url}")
@@ -235,52 +232,42 @@ def process_trace(
     return receipt
 
 
-# ─── CLI ──────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
+def main():
     # Load output from Phase 1
     try:
         with open("trace_output.json") as f:
             trace_json_str = f.read()
         print("Loaded trace_output.json from Phase 1\n")
     except FileNotFoundError:
-        # Minimal inline mock for standalone testing
-        trace_json_str = json.dumps({
-            "schema_version": "1.0.0",
-            "trace_id": "abc123",
-            "asset": "BTC/USDC",
-            "timestamp_utc": "2025-01-01T00:00:00+00:00",
-            "regime": "NEUTRAL",
-            "reasoning_trace": [
-                {"step": 1, "thought": "RSI neutral", "evidence": "RSI=52"},
-                {"step": 2, "thought": "Vol normal",  "evidence": "Vol=40%"},
-                {"step": 3, "thought": "Hold advised", "evidence": "No edge"},
-            ],
-            "action": "HOLD",
-            "conviction": 0.5,
-            "rationale_summary": "Neutral regime, no edge.",
-            "suggested_position_size_pct": 0.0,
-            "stop_loss_pct": 4.0,
-            "take_profit_pct": 6.0,
-        })
+        print("Run Phase 1 first")
+        return
 
-    receipt = process_trace(trace_json_str, mode="mock")
+    receipt = process_trace(trace_json_str, mode="pinata")
 
     print("\nStorage Receipt:")
-    print(f"   sha256_hex  : {receipt.sha256_hex}")
-    print(f"   ipfs_cid    : {receipt.ipfs_cid}")
-    print(f"   ipfs_url    : {receipt.ipfs_url}")
-    print(f"   byte_size   : {receipt.byte_size} bytes")
-    print(f"   pinned_at   : {receipt.pinned_at_utc}")
+    print(f"sha256_hex  : {receipt.sha256_hex}")
+    print(f"ipfs_cid    : {receipt.ipfs_cid}")
+    print(f"ipfs_url    : {receipt.ipfs_url}")
+    print(f"byte_size   : {receipt.byte_size} bytes")
+    print(f"pinned_at   : {receipt.pinned_at_utc}")
 
     # Save receipt for Phase 3
     with open("storage_receipt.json", "w") as f:
-        json.dump({
-            "sha256_hex":   receipt.sha256_hex,
-            "ipfs_cid":     receipt.ipfs_cid,
-            "ipfs_url":     receipt.ipfs_url,
-            "pinata_tx_id": receipt.pinata_tx_id,
-            "byte_size":    receipt.byte_size,
-            "pinned_at_utc": receipt.pinned_at_utc,
-        }, f, indent=2)
+        json.dump(
+            {
+                "sha256_hex": receipt.sha256_hex,
+                "ipfs_cid": receipt.ipfs_cid,
+                "ipfs_url": receipt.ipfs_url,
+                "pinata_tx_id": receipt.pinata_tx_id,
+                "byte_size": receipt.byte_size,
+                "pinned_at_utc": receipt.pinned_at_utc,
+            },
+            f,
+            indent=2,
+        )
     print("\nSaved to storage_receipt.json")
+
+
+# CLI
+if __name__ == "__main__":
+    main()

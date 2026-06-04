@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
 from dotenv import load_dotenv
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
@@ -64,9 +65,9 @@ MARKET_ABI = [
         "type": "function",
         "stateMutability": "nonpayable",
         "inputs": [
-            {"name": "_hexHash",          "type": "bytes32"},
-            {"name": "_ipfsCid",          "type": "string"},
-            {"name": "_wagingWindow",     "type": "uint256"},
+            {"name": "_hexHash", "type": "bytes32"},
+            {"name": "_ipfsCid", "type": "string"},
+            {"name": "_wagingWindow", "type": "uint256"},
             {"name": "_resolutionWindow", "type": "uint256"},
         ],
         "outputs": [],
@@ -80,16 +81,16 @@ MARKET_ABI = [
             {
                 "type": "tuple",
                 "components": [
-                    {"name": "sha256Hash",         "type": "bytes32"},
-                    {"name": "ipfsCid",            "type": "string"},
-                    {"name": "creator",            "type": "address"},
-                    {"name": "registeredAt",       "type": "uint256"},
-                    {"name": "wagingDeadline",     "type": "uint256"},
+                    {"name": "sha256Hash", "type": "bytes32"},
+                    {"name": "ipfsCid", "type": "string"},
+                    {"name": "creator", "type": "address"},
+                    {"name": "registeredAt", "type": "uint256"},
+                    {"name": "wagingDeadline", "type": "uint256"},
                     {"name": "resolutionDeadline", "type": "uint256"},
-                    {"name": "resolved",           "type": "bool"},
-                    {"name": "wasProfitable",      "type": "bool"},
-                    {"name": "profitPool",         "type": "uint256"},
-                    {"name": "lossPool",           "type": "uint256"},
+                    {"name": "resolved", "type": "bool"},
+                    {"name": "wasProfitable", "type": "bool"},
+                    {"name": "profitPool", "type": "uint256"},
+                    {"name": "lossPool", "type": "uint256"},
                 ],
             }
         ],
@@ -99,30 +100,33 @@ MARKET_ABI = [
 
 # ─── Data ─────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class PipelineReceipt:
     """Complete receipt linking every layer of the pipeline."""
-    trace_id:           str    # deterministic from Phase 1
-    asset:              str
-    action:             str
-    conviction:         float
-    sha256_hex:         str    # from Phase 2
-    ipfs_cid:           str    # from Phase 2
-    ipfs_url:           str    # from Phase 2
-    tx_hash:            str    # Phase 3 — Arc L1 transaction
-    block_number:       int    # Arc L1 block
-    contract_address:   str
-    waging_deadline:    str    # ISO UTC
-    resolution_deadline: str   # ISO UTC
-    registered_at_utc:  str
+
+    trace_id: str  # deterministic from Phase 1
+    asset: str
+    action: str
+    conviction: float
+    sha256_hex: str  # from Phase 2
+    ipfs_cid: str  # from Phase 2
+    ipfs_url: str  # from Phase 2
+    tx_hash: str  # Phase 3 — Arc L1 transaction
+    block_number: int  # Arc L1 block
+    contract_address: str
+    waging_deadline: str  # ISO UTC
+    resolution_deadline: str  # ISO UTC
+    registered_at_utc: str
 
 
 # ─── Phase 3: On-chain registration ────────────────────────────────────────────
 
+
 def register_trace_on_chain(
     sha256_hex: str,
-    ipfs_cid:   str,
-    dry_run:    bool = False,
+    ipfs_cid: str,
+    dry_run: bool = False,
 ) -> dict:
     """
     Sends a registerTrace() transaction to the Arc smart contract.
@@ -177,12 +181,14 @@ def register_trace_on_chain(
         ipfs_cid,
         WAGING_WINDOW_SECS,
         RESOLUTION_WINDOW_SECS,
-    ).build_transaction({
-        "from":     account.address,
-        "nonce":    nonce,
-        "gasPrice": gas_price,
-        "gas":      300_000,   # safe upper bound; refunded if unused
-    })
+    ).build_transaction(
+        {
+            "from": account.address,
+            "nonce": nonce,
+            "gasPrice": gas_price,
+            "gas": 300_000,  # safe upper bound; refunded if unused
+        }
+    )
 
     # Sign and send
     signed = account.sign_transaction(tx)
@@ -196,18 +202,19 @@ def register_trace_on_chain(
 
     print(f"Confirmed in block {receipt.blockNumber}")
     return {
-        "tx_hash":      tx_hash.hex(),
+        "tx_hash": tx_hash.hex(),
         "block_number": receipt.blockNumber,
     }
 
 
 # ─── Full Pipeline ────────────────────────────────────────────────────────────
 
+
 def run_pipeline(
-    signal:       MarketSignal,
+    signal: MarketSignal,
     use_mock_llm: bool = True,
-    storage_mode: str  = "mock",   # "pinata" | "local" | "mock"
-    dry_run:      bool = True,
+    storage_mode: str = "mock",  # "pinata" | "local" | "mock"
+    dry_run: bool = True,
 ) -> PipelineReceipt:
     """
     Execute the full Trading-R1 pipeline:
@@ -286,6 +293,7 @@ def run_pipeline(
 
 # ─── Continuous Mode (cron / scheduler) ───────────────────────────────────────
 
+
 def run_continuous(interval_seconds: int = 3_600):
     """
     Runs the pipeline on a fixed interval — useful for a live demo.
@@ -335,10 +343,16 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Trading-R1 pipeline orchestrator")
-    parser.add_argument("--live-llm",   action="store_true", help="Use real Anthropic API")
-    parser.add_argument("--pinata",     action="store_true", help="Pin to Pinata IPFS")
-    parser.add_argument("--broadcast",  action="store_true", help="Actually send the tx to Arc")
-    parser.add_argument("--continuous", action="store_true", help="Loop mode (for demos)")
+    parser.add_argument(
+        "--live-llm", action="store_true", help="Use real Anthropic API"
+    )
+    parser.add_argument("--pinata", action="store_true", help="Pin to Pinata IPFS")
+    parser.add_argument(
+        "--broadcast", action="store_true", help="Actually send the tx to Arc"
+    )
+    parser.add_argument(
+        "--continuous", action="store_true", help="Loop mode (for demos)"
+    )
     args = parser.parse_args()
 
     if args.continuous:

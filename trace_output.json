@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0.0",
-  "trace_id": "5a67dd8b9aa4de675afd15dadb038a228eac1622d94d5c40d57adc84105b5f0f",
+  "trace_id": "9562ec430716a3e00b5dd6ff51516833c21fe843b16ce64fc456fd362b7c6cf6",
   "asset": "BTC/USDC",
-  "timestamp_utc": "2026-05-26T14:32:23.782179+00:00",
+  "timestamp_utc": "2026-06-04T11:55:05.176544+00:00",
   "regime": "HIGH_VOL_UNCERTAIN",
   "reasoning_trace": [
     {
