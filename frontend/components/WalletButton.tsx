@@ -6,26 +6,43 @@
 
 "use client";
 
-import { useAccount, useConnect, useDisconnect, useBalance } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useReadContract } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { formatUnits } from "viem";
 import { CONTRACT_ADDRESSES } from "@/wagmi.config";
+
+// Minimal ABI to fetch ERC20 balances
+const ERC20_ABI = [
+    {
+        name: "balanceOf",
+        type: "function",
+        stateMutability: "view",
+        inputs: [{ name: "account", type: "address" }],
+        outputs: [{ type: "uint256" }],
+    },
+] as const;
 
 export default function WalletButton() {
     const { address, isConnected } = useAccount();
     const { connect } = useConnect();
     const { disconnect } = useDisconnect();
-    const { data: balance } = useBalance({
-        address,
-        token: CONTRACT_ADDRESSES.USDC,
+
+    const { data: balance } = useReadContract({
+        address: CONTRACT_ADDRESSES.USDC,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: address ? [address] : undefined,
+        query: { enabled: !!address },
     });
 
     if (isConnected && address) {
         return (
             <div className="flex items-center gap-2">
-                {balance && (
+                {balance !== undefined && (
                     <div className="hidden sm:flex rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-400 font-mono">
-                        {parseFloat(formatUnits(balance.value, 6)).toFixed(2)}{" "}
+                        {parseFloat(formatUnits(balance as bigint, 6)).toFixed(
+                            2,
+                        )}{" "}
                         USDC
                     </div>
                 )}
