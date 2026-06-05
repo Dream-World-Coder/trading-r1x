@@ -1,7 +1,8 @@
 /**
  * components/WalletButton.tsx
  * ============================
- * Reusable wallet connect / disconnect button used by all pages.
+ * Reusable wallet connect / disconnect button.
+ * All hook logic is unchanged — only visual layer updated.
  */
 
 "use client";
@@ -11,7 +12,6 @@ import { injected } from "wagmi/connectors";
 import { formatUnits } from "viem";
 import { CONTRACT_ADDRESSES } from "@/wagmi.config";
 
-// Minimal ABI to fetch ERC20 balances
 const ERC20_ABI = [
     {
         name: "balanceOf",
@@ -39,18 +39,52 @@ export default function WalletButton() {
         return (
             <div className="flex items-center gap-2">
                 {balance !== undefined && (
-                    <div className="hidden sm:flex rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs text-slate-400 font-mono">
-                        {parseFloat(formatUnits(balance as bigint, 6)).toFixed(
-                            2,
-                        )}{" "}
-                        USDC
+                    <div
+                        className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-sm border"
+                        style={{
+                            borderColor: "var(--paper-rule)",
+                            background: "var(--paper-warm)",
+                        }}
+                    >
+                        <span
+                            className="mono-xs"
+                            style={{ color: "var(--ink-3)" }}
+                        >
+                            {parseFloat(
+                                formatUnits(balance as bigint, 6),
+                            ).toFixed(2)}{" "}
+                            USDC
+                        </span>
                     </div>
                 )}
                 <button
                     onClick={() => disconnect()}
-                    className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-4 py-1.5 text-sm text-slate-300 hover:border-red-500/50 hover:text-red-400 transition-colors"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-sm border text-sm transition-colors"
+                    style={{
+                        borderColor: "var(--paper-rule)",
+                        background: "var(--paper-warm)",
+                        color: "var(--ink-2)",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "0.72rem",
+                    }}
+                    onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.borderColor =
+                            "var(--red-border)";
+                        (e.currentTarget as HTMLElement).style.color =
+                            "var(--red)";
+                    }}
+                    onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.borderColor =
+                            "var(--paper-rule)";
+                        (e.currentTarget as HTMLElement).style.color =
+                            "var(--ink-2)";
+                    }}
                 >
-                    <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                    {/* Connected indicator */}
+                    <span
+                        className="h-1.5 w-1.5 rounded-full shrink-0 pulse"
+                        style={{ background: "var(--green)" }}
+                    />
                     {address.slice(0, 6)}…{address.slice(-4)}
                 </button>
             </div>
@@ -60,7 +94,7 @@ export default function WalletButton() {
     return (
         <button
             onClick={() => connect({ connector: injected() })}
-            className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+            className="btn-primary"
         >
             Connect Wallet
         </button>

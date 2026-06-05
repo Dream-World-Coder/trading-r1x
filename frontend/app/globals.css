@@ -1,26 +1,336 @@
+@import url("https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap");
 @import "tailwindcss";
 
+/* ── Design Tokens ─────────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+    /* Paper palette */
+    --paper: #f8f6f1;
+    --paper-warm: #f2efe8;
+    --paper-card: #fdfcf9;
+    --paper-rule: #e8e4db;
+    --paper-grid: #ece9e2;
+
+    /* Ink palette */
+    --ink: #1a1816;
+    --ink-2: #3d3a35;
+    --ink-3: #6b6660;
+    --ink-4: #9b958d;
+    --ink-5: #c4bdb4;
+
+    /* Accent — deep research blue */
+    --accent: #1e3a5f;
+    --accent-light: #e8eef5;
+    --accent-mid: #4a6fa5;
+
+    /* Status */
+    --green: #1f5c3a;
+    --green-bg: #edf5f0;
+    --green-border: #c0d9cb;
+    --red: #7a1f1f;
+    --red-bg: #f5edec;
+    --red-border: #d9c0c0;
+    --amber: #6b4c0e;
+    --amber-bg: #f7f2e8;
+    --amber-border: #d9cebc;
+
+    /* Typography */
+    --font-serif: "Lora", Georgia, "Times New Roman", serif;
+    --font-mono: var(--font-mono, "IBM Plex Mono", "Courier New", monospace);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+    scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-serif);
+    font-size: 15px;
+    line-height: 1.65;
+    min-height: 100vh;
+
+    /* Light boxed grid background */
+    background-image:
+        linear-gradient(var(--paper-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--paper-grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+    background-position: -1px -1px;
+}
+
+/* ── Tailwind custom utilities via @layer ──────────────────────────────────── */
+@layer base {
+    h1,
+    h2,
+    h3,
+    h4 {
+        font-family: var(--font-serif);
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+    }
+}
+
+@layer utilities {
+    /* Color utilities */
+    .bg-paper {
+        background-color: var(--paper);
+    }
+    .bg-paper-warm {
+        background-color: var(--paper-warm);
+    }
+    .bg-paper-card {
+        background-color: var(--paper-card);
+    }
+    .bg-accent-light {
+        background-color: var(--accent-light);
+    }
+    .bg-green-bg {
+        background-color: var(--green-bg);
+    }
+    .bg-red-bg {
+        background-color: var(--red-bg);
+    }
+    .bg-amber-bg {
+        background-color: var(--amber-bg);
+    }
+
+    .text-ink {
+        color: var(--ink);
+    }
+    .text-ink-2 {
+        color: var(--ink-2);
+    }
+    .text-ink-3 {
+        color: var(--ink-3);
+    }
+    .text-ink-4 {
+        color: var(--ink-4);
+    }
+    .text-ink-5 {
+        color: var(--ink-5);
+    }
+    .text-accent {
+        color: var(--accent);
+    }
+    .text-accent-mid {
+        color: var(--accent-mid);
+    }
+    .text-green {
+        color: var(--green);
+    }
+    .text-red-ink {
+        color: var(--red);
+    }
+    .text-amber-ink {
+        color: var(--amber);
+    }
+
+    .border-rule {
+        border-color: var(--paper-rule);
+    }
+    .border-accent {
+        border-color: var(--accent);
+    }
+    .border-green {
+        border-color: var(--green-border);
+    }
+    .border-red-ink {
+        border-color: var(--red-border);
+    }
+    .border-amber {
+        border-color: var(--amber-border);
+    }
+
+    /* Typography utilities */
+    .font-serif {
+        font-family: var(--font-serif);
+    }
+    .font-mono {
+        font-family: var(--font-mono);
+    }
+
+    /* Label / caption style */
+    .label {
+        font-family: var(--font-mono);
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-4);
+    }
+
+    /* Card style */
+    .card {
+        background: var(--paper-card);
+        border: 1px solid var(--paper-rule);
+        border-radius: 2px;
+    }
+
+    /* Rule line */
+    .rule {
+        border-top: 1px solid var(--paper-rule);
+    }
+
+    /* Hover transition */
+    .card-hover {
+        transition:
+            border-color 150ms ease,
+            box-shadow 150ms ease;
+    }
+    .card-hover:hover {
+        border-color: var(--ink-4);
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+    }
+
+    /* Input base */
+    .input-base {
+        width: 100%;
+        font-family: var(--font-mono);
+        font-size: 0.875rem;
+        background: var(--paper);
+        border: 1px solid var(--paper-rule);
+        border-radius: 2px;
+        padding: 0.5rem 0.75rem;
+        color: var(--ink);
+        outline: none;
+        transition: border-color 120ms;
+    }
+    .input-base:focus {
+        border-color: var(--accent-mid);
+    }
+    .input-base::placeholder {
+        color: var(--ink-5);
+    }
+
+    /* Button primary */
+    .btn-primary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 0.6rem 1.25rem;
+        background: var(--accent);
+        color: #fff;
+        border: 1px solid var(--accent);
+        border-radius: 2px;
+        cursor: pointer;
+        transition:
+            background 120ms,
+            opacity 120ms;
+    }
+    .btn-primary:hover {
+        background: #162d4a;
+    }
+    .btn-primary:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    /* Button secondary */
+    .btn-secondary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        padding: 0.5rem 1rem;
+        background: transparent;
+        color: var(--ink-2);
+        border: 1px solid var(--paper-rule);
+        border-radius: 2px;
+        cursor: pointer;
+        transition:
+            border-color 120ms,
+            color 120ms;
+    }
+    .btn-secondary:hover {
+        border-color: var(--ink-3);
+        color: var(--ink);
+    }
+    .btn-secondary.active {
+        border-color: var(--accent);
+        color: var(--accent);
+        background: var(--accent-light);
+    }
+    .btn-secondary:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    /* Badge */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        font-family: var(--font-mono);
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding: 0.2rem 0.5rem;
+        border-radius: 2px;
+        border-width: 1px;
+        border-style: solid;
+    }
+
+    /* Mono small */
+    .mono-xs {
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+    }
+    .mono-sm {
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+    }
+
+    /* Animate spin */
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    .animate-spin {
+        animation: spin 1s linear infinite;
+    }
+
+    /* Pulse dot */
+    @keyframes pulse-dot {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.4;
+        }
+    }
+    .pulse {
+        animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+
+    /* Subtle fade in */
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(4px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    .fade-in {
+        animation: fadeIn 0.25s ease forwards;
+    }
 }

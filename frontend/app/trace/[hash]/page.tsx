@@ -5,6 +5,8 @@
  *  - ABI Trace struct no longer has sha256Hash / registeredAt (don't exist in contract)
  *  - getUserWager removed (doesn't exist) → uses profitWagers + lossWagers mappings
  *  - WagerForm imported from components
+ *
+ * All hook logic is completely unchanged — only visual layer updated.
  */
 
 "use client";
@@ -37,12 +39,34 @@ interface IpfsTrace {
     timestamp_utc: string;
 }
 
+// ─── Action config ────────────────────────────────────────────────────────────
+
+const ACTION_STYLE: Record<
+    "BUY" | "SELL" | "HOLD",
+    { color: string; border: string; bg: string }
+> = {
+    BUY: {
+        color: "var(--green)",
+        border: "var(--green-border)",
+        bg: "var(--green-bg)",
+    },
+    SELL: {
+        color: "var(--red)",
+        border: "var(--red-border)",
+        bg: "var(--red-bg)",
+    },
+    HOLD: {
+        color: "var(--amber)",
+        border: "var(--amber-border)",
+        bg: "var(--amber-bg)",
+    },
+};
+
 // ─── Claim Button ─────────────────────────────────────────────────────────────
 
 function ClaimButton({ traceHash }: { traceHash: `0x${string}` }) {
     const { address } = useAccount();
 
-    // Read user's profit wager
     const { data: profitWager } = useReadContract({
         address: CONTRACT_ADDRESSES.TradeReasoningMarket,
         abi: MARKET_ABI,
@@ -51,7 +75,6 @@ function ClaimButton({ traceHash }: { traceHash: `0x${string}` }) {
         query: { enabled: !!address },
     });
 
-    // Read user's loss wager
     const { data: lossWager } = useReadContract({
         address: CONTRACT_ADDRESSES.TradeReasoningMarket,
         abi: MARKET_ABI,
@@ -60,7 +83,6 @@ function ClaimButton({ traceHash }: { traceHash: `0x${string}` }) {
         query: { enabled: !!address },
     });
 
-    // Read claimed status
     const { data: claimed } = useReadContract({
         address: CONTRACT_ADDRESSES.TradeReasoningMarket,
         abi: MARKET_ABI,
@@ -85,33 +107,55 @@ function ClaimButton({ traceHash }: { traceHash: `0x${string}` }) {
 
     if (claimed || isSuccess) {
         return (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 text-center">
-                <p className="text-sm font-semibold text-emerald-400">
-                    ✅ Winnings claimed
+            <div
+                className="rounded-sm border p-4 text-center"
+                style={{
+                    borderColor: "var(--green-border)",
+                    background: "var(--green-bg)",
+                }}
+            >
+                <p
+                    className="text-sm font-medium"
+                    style={{
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--green)",
+                    }}
+                >
+                    ✓ Winnings claimed
                 </p>
             </div>
         );
     }
 
     return (
-        <div className="rounded-xl border border-slate-700 bg-slate-900 p-4 space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-                Your wager
-            </p>
-            <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Amount</span>
-                <span className="font-mono text-white">
+        <div
+            className="rounded-sm border p-4 space-y-3"
+            style={{
+                borderColor: "var(--paper-rule)",
+                background: "var(--paper-card)",
+            }}
+        >
+            <p className="label">Your wager</p>
+            <div
+                className="flex justify-between text-sm"
+                style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}
+            >
+                <span style={{ color: "var(--ink-3)" }}>Amount</span>
+                <span style={{ color: "var(--ink)" }}>
                     {parseFloat(formatUnits(userStake, 6)).toFixed(2)} USDC
                 </span>
             </div>
-            <div className="flex justify-between text-sm">
-                <span className="text-slate-400">Predicted</span>
+            <div
+                className="flex justify-between text-sm"
+                style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}
+            >
+                <span style={{ color: "var(--ink-3)" }}>Predicted</span>
                 <span
-                    className={
-                        predictedProfit ? "text-emerald-400" : "text-red-400"
-                    }
+                    style={{
+                        color: predictedProfit ? "var(--green)" : "var(--red)",
+                    }}
                 >
-                    {predictedProfit ? "📈 Profit" : "📉 Loss"}
+                    {predictedProfit ? "↑ Profit" : "↓ Loss"}
                 </span>
             </div>
             <button
@@ -124,13 +168,20 @@ function ClaimButton({ traceHash }: { traceHash: `0x${string}` }) {
                     })
                 }
                 disabled={isPending}
-                className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 transition-colors"
+                className="btn-primary w-full"
+                style={{
+                    background: "var(--green)",
+                    borderColor: "var(--green)",
+                }}
             >
-                {isPending ? "⏳ Claiming…" : "Claim Winnings →"}
+                {isPending ? "Claiming…" : "Claim Winnings →"}
             </button>
             {claimTxHash && (
-                <p className="text-center font-mono text-xs text-slate-500">
-                    Tx: {claimTxHash.slice(0, 20)}…
+                <p
+                    className="text-center mono-xs"
+                    style={{ color: "var(--ink-4)" }}
+                >
+                    Tx: {claimTxHash.slice(0, 22)}…
                 </p>
             )}
         </div>
@@ -145,29 +196,39 @@ function ResolutionBanner({ trace }: { trace: OnChainTrace }) {
         const open = now < trace.wagingDeadline;
         return (
             <div
-                className={`rounded-xl border p-4 text-sm ${
-                    open
-                        ? "border-indigo-500/30 bg-indigo-500/5 text-indigo-400"
-                        : "border-amber-500/30 bg-amber-500/5 text-amber-400"
-                }`}
+                className="rounded-sm border p-3 mono-xs"
+                style={{
+                    borderColor: open
+                        ? "var(--accent-light)"
+                        : "var(--amber-border)",
+                    background: open
+                        ? "var(--accent-light)"
+                        : "var(--amber-bg)",
+                    color: open ? "var(--accent)" : "var(--amber)",
+                }}
             >
                 {open
-                    ? `⏳ Wagers open until ${new Date(Number(trace.wagingDeadline) * 1000).toLocaleString()}`
-                    : "🔒 Waging closed. Awaiting oracle resolution."}
+                    ? `Wagers open until ${new Date(Number(trace.wagingDeadline) * 1000).toLocaleString()}`
+                    : "Waging closed — awaiting oracle resolution."}
             </div>
         );
     }
     return (
         <div
-            className={`rounded-xl border p-4 text-sm font-semibold ${
-                trace.wasProfitable
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
-                    : "border-red-500/40 bg-red-500/10 text-red-400"
-            }`}
+            className="rounded-sm border p-3 mono-xs font-semibold"
+            style={{
+                borderColor: trace.wasProfitable
+                    ? "var(--green-border)"
+                    : "var(--red-border)",
+                background: trace.wasProfitable
+                    ? "var(--green-bg)"
+                    : "var(--red-bg)",
+                color: trace.wasProfitable ? "var(--green)" : "var(--red)",
+            }}
         >
             {trace.wasProfitable
-                ? "✅ Resolved: Trade was PROFITABLE"
-                : "❌ Resolved: Trade was NOT profitable"}
+                ? "Resolved — Trade was PROFITABLE"
+                : "Resolved — Trade was NOT profitable"}
         </div>
     );
 }
@@ -214,8 +275,6 @@ function useIpfsTrace(cid: string) {
             setLoading(false);
         };
 
-        // Fix: If no CID is provided (e.g., trace not on chain), load the mock immediately
-        // instead of returning early and leaving loading = true forever.
         if (!cid) {
             loadMock();
             return;
@@ -263,12 +322,22 @@ export default function TracePage({
     const profitPct =
         totalUsdc > 0 ? Math.round((profitUsdc / totalUsdc) * 100) : 50;
 
+    // Loading state
     if (chainLoading || ipfsLoading) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-slate-950">
-                <div className="space-y-3 text-center">
-                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-                    <p className="text-sm text-slate-500">Loading trace…</p>
+            <div
+                className="flex min-h-screen items-center justify-center"
+                style={{ background: "var(--paper)" }}
+            >
+                <div className="space-y-4 text-center">
+                    <div
+                        className="mx-auto h-6 w-6 rounded-full border-2 animate-spin"
+                        style={{
+                            borderColor: "var(--paper-rule)",
+                            borderTopColor: "var(--accent)",
+                        }}
+                    />
+                    <p className="label">Loading trace…</p>
                 </div>
             </div>
         );
@@ -279,29 +348,56 @@ export default function TracePage({
             ? BigInt(Math.floor(Date.now() / 1000)) < trace.wagingDeadline
             : false;
 
-    const ACTION_COLORS = {
-        BUY: "text-emerald-400",
-        SELL: "text-red-400",
-        HOLD: "text-amber-400",
-    };
+    const actionStyle = ipfsTrace ? ACTION_STYLE[ipfsTrace.action] : null;
 
     return (
-        <div className="min-h-screen bg-slate-950 text-white">
+        <div className="min-h-screen" style={{ background: "var(--paper)" }}>
             {/* Header */}
-            <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
-                <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+            <header
+                className="sticky top-0 z-50 border-b"
+                style={{
+                    borderColor: "var(--paper-rule)",
+                    background: "rgba(248,246,241,0.92)",
+                    backdropFilter: "blur(12px)",
+                }}
+            >
+                <div className="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <Link
                             href="/"
-                            className="text-sm text-slate-400 transition-colors hover:text-white"
+                            className="mono-xs transition-colors"
+                            style={{ color: "var(--ink-4)" }}
+                            onMouseEnter={(e) =>
+                                ((e.currentTarget as HTMLElement).style.color =
+                                    "var(--accent)")
+                            }
+                            onMouseLeave={(e) =>
+                                ((e.currentTarget as HTMLElement).style.color =
+                                    "var(--ink-4)")
+                            }
                         >
                             ← Back
                         </Link>
-                        <span className="text-slate-700">|</span>
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-xs font-black">
-                            R1
-                        </div>
-                        <span className="font-semibold text-slate-200">
+                        <span style={{ color: "var(--paper-rule)" }}>|</span>
+                        <span
+                            className="font-bold"
+                            style={{
+                                fontFamily: "var(--font-mono)",
+                                fontSize: "0.8rem",
+                                color: "var(--accent)",
+                            }}
+                        >
+                            TRADING-R1
+                        </span>
+                        <span
+                            className="hidden sm:block"
+                            style={{
+                                fontFamily: "var(--font-serif)",
+                                fontStyle: "italic",
+                                fontSize: "0.78rem",
+                                color: "var(--ink-4)",
+                            }}
+                        >
                             Trace Detail
                         </span>
                     </div>
@@ -309,26 +405,31 @@ export default function TracePage({
                 </div>
             </header>
 
-            <main className="mx-auto max-w-6xl px-6 py-10">
-                {/* Title */}
-                <div className="mb-6">
-                    <p className="mb-1 font-mono text-xs text-slate-500">
-                        {hash.slice(0, 20)}…
-                    </p>
-                    <h1 className="text-3xl font-black text-white">
+            <main className="mx-auto max-w-5xl px-6 py-10">
+                {/* Page title */}
+                <div
+                    className="mb-6 pb-6"
+                    style={{ borderBottom: "1px solid var(--paper-rule)" }}
+                >
+                    <p className="label mb-2">{hash.slice(0, 20)}…</p>
+                    <h1
+                        className="text-3xl font-bold leading-tight mb-2"
+                        style={{ fontFamily: "var(--font-serif)" }}
+                    >
                         <span>{ipfsTrace?.asset ?? "—"}</span>
                         {" — "}
-                        <span
-                            className={
-                                ipfsTrace
-                                    ? ACTION_COLORS[ipfsTrace.action]
-                                    : "text-white"
-                            }
-                        >
+                        <span style={{ color: actionStyle?.color }}>
                             {ipfsTrace?.action ?? "—"}
                         </span>
                     </h1>
-                    <p className="mt-2 max-w-2xl text-slate-400">
+                    <p
+                        className="max-w-2xl text-base leading-relaxed"
+                        style={{
+                            fontFamily: "var(--font-serif)",
+                            fontStyle: "italic",
+                            color: "var(--ink-3)",
+                        }}
+                    >
                         {ipfsTrace?.rationale_summary}
                     </p>
                 </div>
@@ -343,23 +444,26 @@ export default function TracePage({
                 <div className="grid gap-8 lg:grid-cols-3">
                     {/* Left: reasoning + provenance */}
                     <div className="space-y-6 lg:col-span-2">
-                        {/* Metrics */}
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        {/* Metrics grid */}
+                        <div
+                            className="grid grid-cols-2 sm:grid-cols-4 border overflow-hidden rounded-sm"
+                            style={{ borderColor: "var(--paper-rule)" }}
+                        >
                             {[
                                 {
                                     label: "Conviction",
                                     value: `${((ipfsTrace?.conviction ?? 0) * 100).toFixed(0)}%`,
-                                    color: "text-white",
+                                    color: "var(--ink)",
                                 },
                                 {
                                     label: "Stop Loss",
                                     value: `-${ipfsTrace?.stop_loss_pct ?? "—"}%`,
-                                    color: "text-red-400",
+                                    color: "var(--red)",
                                 },
                                 {
                                     label: "Take Profit",
                                     value: `+${ipfsTrace?.take_profit_pct ?? "—"}%`,
-                                    color: "text-emerald-400",
+                                    color: "var(--green)",
                                 },
                                 {
                                     label: "Regime",
@@ -367,18 +471,24 @@ export default function TracePage({
                                         /_/g,
                                         " ",
                                     ),
-                                    color: "text-amber-400",
+                                    color: "var(--amber)",
                                 },
                             ].map(({ label, value, color }) => (
                                 <div
                                     key={label}
-                                    className="rounded-xl border border-slate-800 bg-slate-900 p-4 text-center"
+                                    className="px-4 py-4 text-center border-r last:border-r-0"
+                                    style={{
+                                        borderColor: "var(--paper-rule)",
+                                        background: "var(--paper-card)",
+                                    }}
                                 >
-                                    <p className="mb-1 text-xs text-slate-500">
-                                        {label}
-                                    </p>
+                                    <p className="label mb-1">{label}</p>
                                     <p
-                                        className={`truncate text-xl font-bold ${color}`}
+                                        className="text-xl font-bold truncate leading-none"
+                                        style={{
+                                            fontFamily: "var(--font-mono)",
+                                            color,
+                                        }}
                                     >
                                         {value}
                                     </p>
@@ -386,29 +496,78 @@ export default function TracePage({
                             ))}
                         </div>
 
-                        {/* Reasoning chain */}
-                        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                            <h2 className="mb-5 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                        {/* Reasoning chain — the main artifact */}
+                        <div className="card rounded-sm p-6">
+                            <h2
+                                className="text-xs font-semibold mb-5 pb-3"
+                                style={{
+                                    fontFamily: "var(--font-mono)",
+                                    letterSpacing: "0.1em",
+                                    textTransform: "uppercase",
+                                    color: "var(--ink-4)",
+                                    borderBottom: "1px solid var(--paper-rule)",
+                                }}
+                            >
                                 Reasoning Trace
                             </h2>
-                            <div className="space-y-3">
+                            <div className="space-y-4">
                                 {(ipfsTrace?.reasoning_trace ?? []).map(
                                     (step, i, arr) => (
                                         <div
                                             key={step.step}
                                             className="relative pl-8"
                                         >
+                                            {/* Connector line */}
                                             {i < arr.length - 1 && (
-                                                <div className="absolute bottom-0 left-[13px] top-7 w-px bg-slate-700" />
+                                                <div
+                                                    className="absolute bottom-0 left-[11px] top-6 w-px"
+                                                    style={{
+                                                        background:
+                                                            "var(--paper-rule)",
+                                                    }}
+                                                />
                                             )}
-                                            <div className="absolute left-0 top-1 flex h-6 w-6 items-center justify-center rounded-full border border-slate-600 bg-slate-800 text-xs font-bold text-slate-400">
+                                            {/* Step number */}
+                                            <div
+                                                className="absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold border"
+                                                style={{
+                                                    fontFamily:
+                                                        "var(--font-mono)",
+                                                    borderColor:
+                                                        "var(--paper-rule)",
+                                                    background:
+                                                        "var(--paper-warm)",
+                                                    color: "var(--ink-3)",
+                                                }}
+                                            >
                                                 {step.step}
                                             </div>
-                                            <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 p-3">
-                                                <p className="text-sm leading-relaxed text-slate-300">
+                                            {/* Thought bubble */}
+                                            <div
+                                                className="rounded-sm border p-3"
+                                                style={{
+                                                    borderColor:
+                                                        "var(--paper-rule)",
+                                                    background:
+                                                        "var(--paper-warm)",
+                                                }}
+                                            >
+                                                <p
+                                                    className="text-sm leading-relaxed mb-2"
+                                                    style={{
+                                                        fontFamily:
+                                                            "var(--font-serif)",
+                                                        color: "var(--ink-2)",
+                                                    }}
+                                                >
                                                     {step.thought}
                                                 </p>
-                                                <p className="mt-1.5 font-mono text-xs text-cyan-400/80">
+                                                <p
+                                                    className="mono-xs"
+                                                    style={{
+                                                        color: "var(--accent-mid)",
+                                                    }}
+                                                >
                                                     ↳ {step.evidence}
                                                 </p>
                                             </div>
@@ -419,8 +578,17 @@ export default function TracePage({
                         </div>
 
                         {/* Provenance */}
-                        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-3">
-                            <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+                        <div className="card rounded-sm p-6 space-y-4">
+                            <h2
+                                className="text-xs font-semibold pb-3"
+                                style={{
+                                    fontFamily: "var(--font-mono)",
+                                    letterSpacing: "0.1em",
+                                    textTransform: "uppercase",
+                                    color: "var(--ink-4)",
+                                    borderBottom: "1px solid var(--paper-rule)",
+                                }}
+                            >
                                 On-Chain Provenance
                             </h2>
                             {[
@@ -443,16 +611,14 @@ export default function TracePage({
                                         : "—",
                                 },
                             ].map(({ label, value }) => (
-                                <div
-                                    key={label}
-                                    className="flex flex-col gap-0.5"
-                                >
-                                    <span className="text-xs uppercase tracking-widest text-slate-600">
-                                        {label}
-                                    </span>
-                                    <span className="break-all font-mono text-xs text-slate-400">
+                                <div key={label}>
+                                    <p className="label mb-0.5">{label}</p>
+                                    <p
+                                        className="mono-xs break-all"
+                                        style={{ color: "var(--ink-2)" }}
+                                    >
                                         {value}
-                                    </span>
+                                    </p>
                                 </div>
                             ))}
                             {trace?.ipfsCid && (
@@ -460,7 +626,8 @@ export default function TracePage({
                                     href={`https://gateway.pinata.cloud/ipfs/${trace.ipfsCid}`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex text-xs text-indigo-400 transition-colors hover:text-indigo-300"
+                                    className="mono-xs inline-flex transition-colors"
+                                    style={{ color: "var(--accent-mid)" }}
                                 >
                                     View raw JSON on IPFS ↗
                                 </a>
@@ -468,81 +635,135 @@ export default function TracePage({
                         </div>
                     </div>
 
-                    {/* Right: wager / claim */}
+                    {/* Right column */}
                     <div className="space-y-5">
-                        {/* Pool stats */}
-                        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-                            <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                        {/* Pool breakdown */}
+                        <div className="card rounded-sm p-5">
+                            <h2
+                                className="text-xs font-semibold mb-4 pb-3"
+                                style={{
+                                    fontFamily: "var(--font-mono)",
+                                    letterSpacing: "0.1em",
+                                    textTransform: "uppercase",
+                                    color: "var(--ink-4)",
+                                    borderBottom: "1px solid var(--paper-rule)",
+                                }}
+                            >
                                 Pool Breakdown
                             </h2>
-                            <div className="mb-3 space-y-2">
+                            <div className="space-y-3 mb-3">
                                 {[
                                     {
-                                        label: "📈 Will Profit",
+                                        label: "↑ Will Profit",
                                         amount: profitUsdc,
                                         pct: profitPct,
-                                        color: "bg-emerald-500",
+                                        color: "var(--green)",
                                     },
                                     {
-                                        label: "📉 Will Lose",
+                                        label: "↓ Will Lose",
                                         amount: lossUsdc,
                                         pct: 100 - profitPct,
-                                        color: "bg-red-500",
+                                        color: "var(--red)",
                                     },
                                 ].map(({ label, amount, pct, color }) => (
                                     <div key={label}>
-                                        <div className="mb-1 flex justify-between text-xs text-slate-400">
+                                        <div
+                                            className="flex justify-between mb-1"
+                                            style={{
+                                                fontFamily: "var(--font-mono)",
+                                                fontSize: "0.72rem",
+                                                color: "var(--ink-3)",
+                                            }}
+                                        >
                                             <span>{label}</span>
-                                            <span className="font-mono">
-                                                ${amount.toFixed(2)} USDC
-                                            </span>
+                                            <span>${amount.toFixed(2)}</span>
                                         </div>
-                                        <div className="h-1.5 w-full rounded-full bg-slate-700">
+                                        <div
+                                            className="h-1 w-full rounded-full overflow-hidden"
+                                            style={{
+                                                background: "var(--paper-grid)",
+                                            }}
+                                        >
                                             <div
-                                                className={`h-full rounded-full ${color}`}
-                                                style={{ width: `${pct}%` }}
+                                                className="h-full"
+                                                style={{
+                                                    width: `${pct}%`,
+                                                    background: color,
+                                                    opacity: 0.7,
+                                                }}
                                             />
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                            <p className="text-xs text-slate-600">
+                            <p
+                                className="mono-xs"
+                                style={{ color: "var(--ink-5)" }}
+                            >
                                 Total: ${totalUsdc.toFixed(2)} USDC
                             </p>
                         </div>
 
-                        {/* Claim (resolved traces) */}
+                        {/* Claim (resolved) */}
                         {trace?.resolved && (
                             <ClaimButton traceHash={traceHash} />
                         )}
 
-                        {/* Wager form (open markets) */}
+                        {/* Wager form (open) */}
                         {isWagingOpen && (
-                            <div className="rounded-2xl border border-indigo-500/30 bg-slate-900 p-5">
-                                <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">
+                            <div
+                                className="card rounded-sm p-5"
+                                style={{ borderColor: "var(--accent-mid)" }}
+                            >
+                                <h2
+                                    className="text-xs font-semibold mb-4 pb-3"
+                                    style={{
+                                        fontFamily: "var(--font-mono)",
+                                        letterSpacing: "0.1em",
+                                        textTransform: "uppercase",
+                                        color: "var(--ink-4)",
+                                        borderBottom:
+                                            "1px solid var(--paper-rule)",
+                                    }}
+                                >
                                     Place Wager
                                 </h2>
                                 <WagerForm traceHash={traceHash} />
                             </div>
                         )}
 
-                        {/* How it works */}
-                        <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-4 space-y-1.5 text-xs text-slate-500">
-                            <p className="font-semibold text-slate-400">
+                        {/* How payouts work */}
+                        <div
+                            className="rounded-sm border p-4 space-y-1.5"
+                            style={{
+                                borderColor: "var(--paper-rule)",
+                                background: "var(--paper-warm)",
+                            }}
+                        >
+                            <p
+                                className="text-xs font-semibold mb-2"
+                                style={{
+                                    fontFamily: "var(--font-mono)",
+                                    color: "var(--ink-3)",
+                                    letterSpacing: "0.06em",
+                                    textTransform: "uppercase",
+                                }}
+                            >
                                 How payouts work
                             </p>
-                            <p>
-                                Winners receive their stake back plus a pro-rata
-                                share of the loser pool.
-                            </p>
-                            <p>
-                                A 2% protocol fee is deducted from the loser
-                                pool before distribution.
-                            </p>
-                            <p>
-                                If no one loses, all wagers are returned in
-                                full.
-                            </p>
+                            {[
+                                "Winners receive their stake back plus a pro-rata share of the loser pool.",
+                                "A 2% protocol fee is deducted from the loser pool before distribution.",
+                                "If no one loses, all wagers are returned in full.",
+                            ].map((text, i) => (
+                                <p
+                                    key={i}
+                                    className="mono-xs"
+                                    style={{ color: "var(--ink-4)" }}
+                                >
+                                    {text}
+                                </p>
+                            ))}
                         </div>
                     </div>
                 </div>

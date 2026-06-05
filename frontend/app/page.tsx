@@ -3,6 +3,8 @@
  *
  * Production: replace MOCK_TRACES with a TheGraph query indexing TraceRegistered events.
  * For demo: uses static mock data + the one real trace from your pipeline_receipt.json.
+ *
+ * All data logic and state is unchanged — only visual layer updated.
  */
 
 "use client";
@@ -26,14 +28,12 @@ interface MockTrace {
     rationale: string;
     profitPool: bigint;
     lossPool: bigint;
-    wagingDeadline: number; // unix seconds
+    wagingDeadline: number;
     status: TraceStatus;
     ipfsCid: string;
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
-// Replace with live TheGraph query: subgraph.theGraph.query(TRACES_QUERY)
-// The first entry uses your real deployed trace from pipeline_receipt.json
 
 const MOCK_TRACES: MockTrace[] = [
     {
@@ -44,7 +44,7 @@ const MOCK_TRACES: MockTrace[] = [
         conviction: 0.65,
         rationale:
             "Short-term bearish trend combined with oversold RSI suggests a potential buying opportunity.",
-        profitPool: BigInt("1240000000"), // 1240 USDC (6 decimals)
+        profitPool: BigInt("1240000000"),
         lossPool: BigInt("380000000"),
         wagingDeadline: Math.floor(Date.now() / 1000) + 3600 * 18,
         status: "OPEN",
@@ -109,35 +109,60 @@ function timeRemaining(deadline: number): string {
     return `${h}h ${m}m`;
 }
 
-const ACTION_COLORS = {
-    BUY: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10",
-    SELL: "text-red-400 border-red-500/40 bg-red-500/10",
-    HOLD: "text-amber-400 border-amber-500/40 bg-amber-500/10",
+// ─── Action config ────────────────────────────────────────────────────────────
+
+const ACTION_STYLE: Record<
+    "BUY" | "SELL" | "HOLD",
+    { color: string; border: string; bg: string }
+> = {
+    BUY: {
+        color: "var(--green)",
+        border: "var(--green-border)",
+        bg: "var(--green-bg)",
+    },
+    SELL: {
+        color: "var(--red)",
+        border: "var(--red-border)",
+        bg: "var(--red-bg)",
+    },
+    HOLD: {
+        color: "var(--amber)",
+        border: "var(--amber-border)",
+        bg: "var(--amber-bg)",
+    },
 };
 
 const STATUS_CONFIG: Record<
     TraceStatus,
-    { label: string; dot: string; badge: string }
+    { label: string; color: string; border: string; bg: string; pulse: boolean }
 > = {
     OPEN: {
         label: "Open",
-        dot: "bg-emerald-400 animate-pulse",
-        badge: "text-emerald-400 border-emerald-500/30 bg-emerald-500/5",
+        color: "var(--green)",
+        border: "var(--green-border)",
+        bg: "var(--green-bg)",
+        pulse: true,
     },
     PENDING: {
         label: "Awaiting Resolution",
-        dot: "bg-amber-400 animate-pulse",
-        badge: "text-amber-400 border-amber-500/30 bg-amber-500/5",
+        color: "var(--amber)",
+        border: "var(--amber-border)",
+        bg: "var(--amber-bg)",
+        pulse: true,
     },
     RESOLVED_WIN: {
-        label: "Profitable ✓",
-        dot: "bg-slate-500",
-        badge: "text-emerald-300 border-emerald-500/20 bg-emerald-500/5",
+        label: "Profitable",
+        color: "var(--green)",
+        border: "var(--green-border)",
+        bg: "var(--green-bg)",
+        pulse: false,
     },
     RESOLVED_LOSS: {
         label: "Not Profitable",
-        dot: "bg-slate-500",
-        badge: "text-red-400 border-red-500/20 bg-red-500/5",
+        color: "var(--red)",
+        border: "var(--red-border)",
+        bg: "var(--red-bg)",
+        pulse: false,
     },
 };
 
@@ -147,80 +172,153 @@ function TraceCard({ trace }: { trace: MockTrace }) {
     const total = trace.profitPool + trace.lossPool;
     const profitPct =
         total > 0n ? Number((trace.profitPool * 100n) / total) : 50;
-    const action = ACTION_COLORS[trace.action];
+    const action = ACTION_STYLE[trace.action];
     const status = STATUS_CONFIG[trace.status];
     const isOpen = trace.status === "OPEN";
 
     return (
         <Link
             href={`/trace/${trace.hash}`}
-            className="group block rounded-2xl border border-slate-800 bg-slate-900 p-5 transition-all duration-200 hover:border-slate-600 hover:bg-slate-800/80"
+            className="block card card-hover rounded-sm fade-in"
+            style={{ textDecoration: "none" }}
         >
-            {/* Header */}
-            <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                    <div className="flex items-center gap-2 mb-1">
-                        <span className="font-mono text-xs text-slate-500">
-                            {trace.hash.slice(0, 8)}…
-                        </span>
-                        <span
-                            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${action}`}
+            <div className="p-5">
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-4 mb-4">
+                    <div className="flex-1 min-w-0">
+                        {/* Hash + action badge */}
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <span
+                                className="mono-xs"
+                                style={{ color: "var(--ink-5)" }}
+                            >
+                                {trace.hash.slice(0, 8)}…
+                            </span>
+                            <span
+                                className="badge"
+                                style={{
+                                    color: action.color,
+                                    borderColor: action.border,
+                                    background: action.bg,
+                                }}
+                            >
+                                {trace.action}
+                            </span>
+                        </div>
+
+                        {/* Asset name */}
+                        <h3
+                            className="text-lg font-semibold mb-1 leading-tight"
+                            style={{
+                                fontFamily: "var(--font-serif)",
+                                color: "var(--ink)",
+                            }}
                         >
-                            {trace.action}
-                        </span>
-                    </div>
-                    <h3 className="text-lg font-bold text-white">
-                        {trace.asset}
-                    </h3>
-                    <p className="mt-1 text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                        {trace.rationale}
-                    </p>
-                </div>
-                <div className="shrink-0 text-right">
-                    <div className="text-xl font-black text-white">
-                        {(trace.conviction * 100).toFixed(0)}%
-                    </div>
-                    <div className="text-xs text-slate-500">conviction</div>
-                </div>
-            </div>
+                            {trace.asset}
+                        </h3>
 
-            {/* Pool bar */}
-            <div className="mb-3">
-                <div className="mb-1 flex justify-between text-xs text-slate-500">
-                    <span>📈 {formatUsdc(trace.profitPool)} USDC</span>
-                    <span>📉 {formatUsdc(trace.lossPool)} USDC</span>
+                        {/* Rationale */}
+                        <p
+                            className="text-sm leading-relaxed line-clamp-2"
+                            style={{
+                                color: "var(--ink-3)",
+                                fontFamily: "var(--font-serif)",
+                                fontStyle: "italic",
+                            }}
+                        >
+                            {trace.rationale}
+                        </p>
+                    </div>
+
+                    {/* Conviction score */}
+                    <div className="shrink-0 text-right">
+                        <div
+                            className="text-2xl font-bold leading-none"
+                            style={{
+                                fontFamily: "var(--font-mono)",
+                                color: "var(--ink)",
+                            }}
+                        >
+                            {(trace.conviction * 100).toFixed(0)}
+                            <span
+                                className="text-sm font-normal ml-0.5"
+                                style={{ color: "var(--ink-4)" }}
+                            >
+                                %
+                            </span>
+                        </div>
+                        <div className="label mt-0.5">conviction</div>
+                    </div>
                 </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
+
+                {/* Pool distribution */}
+                <div className="mb-3">
                     <div
-                        className="h-full rounded-full bg-emerald-500 transition-all"
-                        style={{ width: `${profitPct}%` }}
-                    />
+                        className="flex justify-between mb-1.5"
+                        style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: "0.68rem",
+                            color: "var(--ink-4)",
+                        }}
+                    >
+                        <span>↑ {formatUsdc(trace.profitPool)} USDC</span>
+                        <span>↓ {formatUsdc(trace.lossPool)} USDC</span>
+                    </div>
+                    <div
+                        className="h-1 w-full rounded-full overflow-hidden"
+                        style={{ background: "var(--paper-grid)" }}
+                    >
+                        <div
+                            className="h-full transition-all"
+                            style={{
+                                width: `${profitPct}%`,
+                                background: "var(--green)",
+                                opacity: 0.7,
+                            }}
+                        />
+                    </div>
                 </div>
-            </div>
 
-            {/* Footer */}
-            <div className="flex items-center justify-between">
-                <div
-                    className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.badge}`}
-                >
+                {/* Footer row */}
+                <div className="rule pt-3 flex items-center justify-between">
+                    {/* Status badge */}
                     <span
-                        className={`h-1.5 w-1.5 rounded-full ${status.dot}`}
-                    />
-                    {status.label}
-                </div>
-                <div className="flex items-center gap-3 text-xs text-slate-500">
-                    <span>
-                        Pool: ${formatUsdc(trace.profitPool + trace.lossPool)}{" "}
-                        USDC
+                        className="badge"
+                        style={{
+                            color: status.color,
+                            borderColor: status.border,
+                            background: status.bg,
+                        }}
+                    >
+                        {status.pulse && (
+                            <span
+                                className="h-1.5 w-1.5 rounded-full mr-1.5 inline-block pulse"
+                                style={{ background: status.color }}
+                            />
+                        )}
+                        {status.label}
                     </span>
-                    {isOpen && (
-                        <span className="font-mono text-amber-400">
-                            ⏱ {timeRemaining(trace.wagingDeadline)}
+
+                    {/* Meta */}
+                    <div
+                        className="flex items-center gap-3"
+                        style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: "0.67rem",
+                            color: "var(--ink-4)",
+                        }}
+                    >
+                        <span>
+                            ${formatUsdc(trace.profitPool + trace.lossPool)}{" "}
+                            pool
                         </span>
-                    )}
-                    <span className="text-slate-600 group-hover:text-slate-400 transition-colors">
-                        View →
-                    </span>
+                        {isOpen && (
+                            <span style={{ color: "var(--amber)" }}>
+                                ⏱ {timeRemaining(trace.wagingDeadline)}
+                            </span>
+                        )}
+                        <span style={{ color: "var(--ink-5)" }}>View →</span>
+                    </div>
                 </div>
             </div>
         </Link>
@@ -244,84 +342,123 @@ export default function MarketplacePage() {
         (t) => t.status === "OPEN" || t.status === "PENDING",
     ).length;
 
+    const totalWagered = MOCK_TRACES.reduce(
+        (s, t) => s + t.profitPool + t.lossPool,
+        0n,
+    );
+
     return (
-        <div className="min-h-screen bg-slate-950 text-white">
+        <div className="min-h-screen" style={{ background: "var(--paper)" }}>
             {/* Header */}
-            <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
-                <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+            <header
+                className="sticky top-0 z-50 border-b"
+                style={{
+                    borderColor: "var(--paper-rule)",
+                    background: "rgba(248,246,241,0.92)",
+                    backdropFilter: "blur(12px)",
+                }}
+            >
+                <div className="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
+                    {/* Wordmark */}
                     <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm font-black">
-                            R1
-                        </div>
-                        <div>
-                            <span className="font-bold text-white">
-                                Trading-R1
-                            </span>
-                            <span className="ml-2 text-xs text-slate-500">
-                                Prediction Market
-                            </span>
-                        </div>
+                        <span
+                            className="font-bold tracking-tight"
+                            style={{
+                                fontFamily: "var(--font-mono)",
+                                fontSize: "0.85rem",
+                                color: "var(--accent)",
+                                letterSpacing: "0.02em",
+                            }}
+                        >
+                            TRADING-R1
+                        </span>
+                        <span
+                            className="hidden sm:block"
+                            style={{
+                                fontFamily: "var(--font-serif)",
+                                fontStyle: "italic",
+                                fontSize: "0.8rem",
+                                color: "var(--ink-4)",
+                            }}
+                        >
+                            Reasoning Trace Market
+                        </span>
                     </div>
                     <WalletButton />
                 </div>
             </header>
 
-            <main className="mx-auto max-w-6xl px-6 py-10">
-                {/* Hero */}
-                <div className="mb-8">
-                    <h1 className="text-3xl font-black text-white">
+            <main className="mx-auto max-w-5xl px-6 py-10">
+                {/* Page header — research paper style */}
+                <div
+                    className="mb-8 pb-6"
+                    style={{ borderBottom: "1px solid var(--paper-rule)" }}
+                >
+                    <p className="label mb-2">
+                        Decentralised Prediction Market · Arc L1
+                    </p>
+                    <h1
+                        className="text-3xl font-bold leading-tight mb-3"
+                        style={{ fontFamily: "var(--font-serif)" }}
+                    >
                         Bet on AI Reasoning
                     </h1>
-                    <p className="mt-2 max-w-xl text-slate-400">
-                        Each card is an immutable AI reasoning trace, pinned on
-                        IPFS and registered on Arc L1. Wager USDC on whether the
-                        logic was sound.
+                    <p
+                        className="max-w-xl text-base leading-relaxed"
+                        style={{
+                            fontFamily: "var(--font-serif)",
+                            fontStyle: "italic",
+                            color: "var(--ink-3)",
+                        }}
+                    >
+                        Each entry is an immutable AI reasoning trace — pinned
+                        on IPFS, registered on Arc&nbsp;L1. Wager USDC on
+                        whether the logic was sound.
                     </p>
                 </div>
 
-                {/* Stats bar */}
-                <div className="mb-6 grid grid-cols-3 gap-3 sm:grid-cols-3">
+                {/* Stats row */}
+                <div
+                    className="grid grid-cols-3 gap-px mb-8 border border-paper-rule overflow-hidden rounded-sm"
+                    style={{ borderColor: "var(--paper-rule)" }}
+                >
                     {[
                         { label: "Total Traces", value: MOCK_TRACES.length },
                         { label: "Open Markets", value: openCount },
                         {
                             label: "Total Wagered",
-                            value:
-                                "$" +
-                                formatUsdc(
-                                    MOCK_TRACES.reduce(
-                                        (s, t) => s + t.profitPool + t.lossPool,
-                                        0n,
-                                    ),
-                                ) +
-                                " USDC",
+                            value: `$${formatUsdc(totalWagered)}`,
                         },
                     ].map(({ label, value }) => (
                         <div
                             key={label}
-                            className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-center"
+                            className="px-4 py-4 text-center"
+                            style={{
+                                background: "var(--paper-card)",
+                                borderColor: "var(--paper-rule)",
+                            }}
                         >
-                            <div className="text-xl font-black text-white">
+                            <div
+                                className="text-xl font-bold leading-none mb-1"
+                                style={{
+                                    fontFamily: "var(--font-mono)",
+                                    color: "var(--ink)",
+                                }}
+                            >
                                 {value}
                             </div>
-                            <div className="text-xs text-slate-500">
-                                {label}
-                            </div>
+                            <div className="label">{label}</div>
                         </div>
                     ))}
                 </div>
 
                 {/* Filter tabs */}
-                <div className="mb-6 flex gap-2">
+                <div className="flex gap-1.5 mb-5">
                     {(["ALL", "OPEN", "RESOLVED"] as FilterTab[]).map((tab) => (
                         <button
                             key={tab}
                             onClick={() => setFilter(tab)}
-                            className={`rounded-lg border px-4 py-1.5 text-sm font-semibold transition-all ${
-                                filter === tab
-                                    ? "border-indigo-500 bg-indigo-500/20 text-indigo-400"
-                                    : "border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-500"
-                            }`}
+                            className={`btn-secondary ${filter === tab ? "active" : ""}`}
                         >
                             {tab}
                         </button>
@@ -330,30 +467,39 @@ export default function MarketplacePage() {
 
                 {/* Cards grid */}
                 {filtered.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-slate-700 py-20 text-center">
-                        <p className="text-slate-500">
-                            No traces in this filter.
-                        </p>
+                    <div
+                        className="rounded-sm border py-20 text-center"
+                        style={{
+                            borderStyle: "dashed",
+                            borderColor: "var(--paper-rule)",
+                        }}
+                    >
+                        <p className="label">No traces in this filter.</p>
                     </div>
                 ) : (
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         {filtered.map((trace) => (
                             <TraceCard key={trace.hash} trace={trace} />
                         ))}
                     </div>
                 )}
 
-                {/* Footer note */}
-                <p className="mt-10 text-center text-xs text-slate-600">
+                {/* Footer */}
+                <p
+                    className="mt-10 text-center mono-xs"
+                    style={{ color: "var(--ink-5)" }}
+                >
                     Production: replace mock data with a TheGraph subgraph
                     indexing{" "}
-                    <code className="text-slate-500">TraceRegistered</code>{" "}
+                    <code style={{ color: "var(--ink-4)" }}>
+                        TraceRegistered
+                    </code>{" "}
                     events. Contract:{" "}
                     <a
                         href="https://testnet.arcscan.app/address/0xb25b94C6A080e1BAD6DaFc1A00A49821AA431c7c"
                         target="_blank"
                         rel="noreferrer"
-                        className="text-indigo-500 hover:text-indigo-400"
+                        style={{ color: "var(--accent-mid)" }}
                     >
                         0xb25b94…431c7c
                     </a>

@@ -1,6 +1,7 @@
 /**
  * components/WagerForm.tsx
  * Two-step approve → placeWager flow with live payout preview.
+ * Hook logic is completely unchanged — only visual layer updated.
  */
 
 "use client";
@@ -24,11 +25,11 @@ type Step = "input" | "approving" | "wagering" | "done";
 
 export function WagerForm({ traceHash }: WagerFormProps) {
     const { address, isConnected } = useAccount();
-    const [prediction, setPrediction] = useState<boolean | null>(null); // true=profit, false=loss
+    const [prediction, setPrediction] = useState<boolean | null>(null);
     const [amount, setAmount] = useState("");
     const [step, setStep] = useState<Step>("input");
 
-    // ── Read current allowance ──────────────────────────────────────────────────
+    // ── Read current allowance ────────────────────────────────────────────────
     const { data: allowance, refetch: refetchAllowance } = useReadContract({
         address: CONTRACT_ADDRESSES.USDC,
         abi: ERC20_ABI,
@@ -39,7 +40,7 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         query: { enabled: !!address },
     });
 
-    // ── Live payout preview ─────────────────────────────────────────────────────
+    // ── Live payout preview ───────────────────────────────────────────────────
     const amountUnits =
         amount && !isNaN(Number(amount)) && Number(amount) > 0
             ? parseUnits(amount, 6)
@@ -56,7 +57,7 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         query: { enabled: prediction !== null && amountUnits > 0n },
     });
 
-    // ── Approve USDC ────────────────────────────────────────────────────────────
+    // ── Approve USDC ──────────────────────────────────────────────────────────
     const {
         writeContract: approve,
         data: approveTxHash,
@@ -68,7 +69,6 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         hash: approveTxHash,
     });
 
-    // After approval confirmed, refetch allowance
     useEffect(() => {
         if (approveSuccess) {
             refetchAllowance();
@@ -76,7 +76,7 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         }
     }, [approveSuccess, refetchAllowance]);
 
-    // ── Place wager ─────────────────────────────────────────────────────────────
+    // ── Place wager ───────────────────────────────────────────────────────────
     const {
         writeContract: placeWager,
         data: wagerTxHash,
@@ -91,7 +91,7 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         if (wagerSuccess) setStep("done");
     }, [wagerSuccess]);
 
-    // ── Derived state ───────────────────────────────────────────────────────────
+    // ── Derived state ─────────────────────────────────────────────────────────
     const needsApproval =
         allowance !== undefined && amountUnits > 0n && allowance < amountUnits;
 
@@ -123,31 +123,53 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         }
     }
 
-    // ── Not connected ────────────────────────────────────────────────────────────
+    // ── Not connected ─────────────────────────────────────────────────────────
     if (!isConnected) {
         return (
-            <div className="rounded-xl border border-dashed border-slate-700 p-6 text-center">
-                <p className="text-sm text-slate-500">
+            <div
+                className="rounded-sm border p-6 text-center"
+                style={{
+                    borderStyle: "dashed",
+                    borderColor: "var(--paper-rule)",
+                    background: "var(--paper-warm)",
+                }}
+            >
+                <p className="mono-xs" style={{ color: "var(--ink-4)" }}>
                     Connect your wallet to wager USDC on this trace.
                 </p>
             </div>
         );
     }
 
-    // ── Done ─────────────────────────────────────────────────────────────────────
+    // ── Done ──────────────────────────────────────────────────────────────────
     if (step === "done") {
         return (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-6 text-center space-y-2">
-                <div className="text-2xl">✅</div>
-                <p className="font-semibold text-emerald-400">Wager placed!</p>
+            <div
+                className="rounded-sm border p-6 text-center space-y-2 fade-in"
+                style={{
+                    borderColor: "var(--green-border)",
+                    background: "var(--green-bg)",
+                }}
+            >
+                <div className="text-xl">✓</div>
+                <p
+                    className="font-semibold text-sm"
+                    style={{
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--green)",
+                    }}
+                >
+                    Wager confirmed
+                </p>
                 {wagerTxHash && (
                     <a
                         href={`https://testnet.arcscan.app/tx/${wagerTxHash}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="block font-mono text-xs text-indigo-400 hover:underline"
+                        className="mono-xs block"
+                        style={{ color: "var(--accent-mid)" }}
                     >
-                        {wagerTxHash.slice(0, 20)}… ↗
+                        {wagerTxHash.slice(0, 22)}… ↗
                     </a>
                 )}
             </div>
@@ -158,33 +180,58 @@ export function WagerForm({ traceHash }: WagerFormProps) {
         <div className="space-y-4">
             {/* Prediction toggle */}
             <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-slate-500">
-                    Your prediction
-                </label>
+                <p className="label mb-2">Your prediction</p>
                 <div className="grid grid-cols-2 gap-2">
                     {(
                         [
                             {
                                 value: true,
-                                label: "📈 Will Profit",
-                                active: "border-emerald-500 bg-emerald-500/10 text-emerald-400",
+                                label: "Will Profit",
+                                icon: "↑",
+                                activeStyle: {
+                                    borderColor: "var(--green-border)",
+                                    background: "var(--green-bg)",
+                                    color: "var(--green)",
+                                },
                             },
                             {
                                 value: false,
-                                label: "📉 Will Lose",
-                                active: "border-red-500 bg-red-500/10 text-red-400",
+                                label: "Will Lose",
+                                icon: "↓",
+                                activeStyle: {
+                                    borderColor: "var(--red-border)",
+                                    background: "var(--red-bg)",
+                                    color: "var(--red)",
+                                },
                             },
                         ] as const
-                    ).map(({ value, label, active }) => (
+                    ).map(({ value, label, icon, activeStyle }) => (
                         <button
                             key={String(value)}
                             onClick={() => setPrediction(value)}
-                            className={`rounded-lg border px-4 py-3 text-sm font-semibold transition-all ${
+                            className="rounded-sm border px-3 py-2.5 text-sm font-medium transition-all text-left"
+                            style={
                                 prediction === value
-                                    ? active
-                                    : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500"
-                            }`}
+                                    ? {
+                                          ...activeStyle,
+                                          fontFamily: "var(--font-mono)",
+                                          fontSize: "0.75rem",
+                                      }
+                                    : {
+                                          borderColor: "var(--paper-rule)",
+                                          background: "var(--paper-warm)",
+                                          color: "var(--ink-3)",
+                                          fontFamily: "var(--font-mono)",
+                                          fontSize: "0.75rem",
+                                      }
+                            }
                         >
+                            <span
+                                className="block text-base leading-none mb-0.5"
+                                style={{ fontFamily: "var(--font-serif)" }}
+                            >
+                                {icon}
+                            </span>
                             {label}
                         </button>
                     ))}
@@ -193,9 +240,7 @@ export function WagerForm({ traceHash }: WagerFormProps) {
 
             {/* Amount input */}
             <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-slate-500">
-                    Wager amount
-                </label>
+                <p className="label mb-2">Wager amount</p>
                 <div className="relative">
                     <input
                         type="number"
@@ -204,18 +249,40 @@ export function WagerForm({ traceHash }: WagerFormProps) {
                         placeholder="10"
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 pr-16 text-white placeholder-slate-600 focus:border-indigo-500 focus:outline-none transition-colors"
+                        className="input-base pr-16"
                     />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-500">
+                    <span
+                        className="absolute right-3 top-1/2 -translate-y-1/2 mono-xs font-semibold"
+                        style={{ color: "var(--ink-4)" }}
+                    >
                         USDC
                     </span>
                 </div>
-                <div className="mt-2 flex gap-2">
+                {/* Quick amounts */}
+                <div className="mt-2 flex gap-1.5">
                     {["10", "50", "100", "500"].map((q) => (
                         <button
                             key={q}
                             onClick={() => setAmount(q)}
-                            className="rounded border border-slate-700 px-2 py-0.5 text-xs text-slate-500 hover:border-slate-500 hover:text-slate-300 transition-colors"
+                            className="rounded-sm border px-2 py-0.5 mono-xs transition-colors"
+                            style={{
+                                borderColor: "var(--paper-rule)",
+                                color: "var(--ink-4)",
+                            }}
+                            onMouseEnter={(e) => {
+                                (
+                                    e.currentTarget as HTMLElement
+                                ).style.borderColor = "var(--ink-3)";
+                                (e.currentTarget as HTMLElement).style.color =
+                                    "var(--ink-2)";
+                            }}
+                            onMouseLeave={(e) => {
+                                (
+                                    e.currentTarget as HTMLElement
+                                ).style.borderColor = "var(--paper-rule)";
+                                (e.currentTarget as HTMLElement).style.color =
+                                    "var(--ink-4)";
+                            }}
                         >
                             {q}
                         </button>
@@ -227,19 +294,29 @@ export function WagerForm({ traceHash }: WagerFormProps) {
             {estimatedPayout !== undefined &&
                 amountUnits > 0n &&
                 prediction !== null && (
-                    <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-3">
-                        <div className="flex justify-between text-xs">
-                            <span className="text-slate-500">
-                                Estimated payout
-                            </span>
-                            <span className="font-mono font-semibold text-emerald-400">
+                    <div
+                        className="rounded-sm border p-3 fade-in"
+                        style={{
+                            borderColor: "var(--accent-light)",
+                            background: "var(--accent-light)",
+                        }}
+                    >
+                        <div className="flex justify-between items-baseline">
+                            <span className="label">Est. payout</span>
+                            <span
+                                className="mono-sm font-semibold"
+                                style={{ color: "var(--accent)" }}
+                            >
                                 {parseFloat(
                                     formatUnits(estimatedPayout, 6),
                                 ).toFixed(2)}{" "}
                                 USDC
                             </span>
                         </div>
-                        <p className="mt-1 text-xs text-slate-600">
+                        <p
+                            className="mono-xs mt-1"
+                            style={{ color: "var(--ink-4)" }}
+                        >
                             Based on current pool. Final payout depends on other
                             wagers.
                         </p>
@@ -250,20 +327,25 @@ export function WagerForm({ traceHash }: WagerFormProps) {
             <button
                 onClick={handleCTA}
                 disabled={!canSubmit}
-                className="w-full rounded-lg bg-indigo-600 py-3 font-semibold text-white transition-all hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                className="btn-primary w-full"
+                style={{ letterSpacing: "0.06em" }}
             >
                 {step === "approving" && approveIsPending
-                    ? "⏳ Approving USDC…"
+                    ? "Approving USDC…"
                     : step === "wagering" && wagerIsPending
-                      ? "⏳ Confirming wager…"
+                      ? "Confirming wager…"
                       : needsApproval
-                        ? "Step 1: Approve USDC"
-                        : "Bet on This Logic →"}
+                        ? "Step 1 — Approve USDC"
+                        : "Place Wager →"}
             </button>
 
             {needsApproval && step === "input" && (
-                <p className="text-center text-xs text-slate-600">
-                    Two transactions: approve USDC spend, then place wager.
+                <p
+                    className="text-center mono-xs"
+                    style={{ color: "var(--ink-5)" }}
+                >
+                    Two transactions required: approve USDC spend, then place
+                    wager.
                 </p>
             )}
         </div>
