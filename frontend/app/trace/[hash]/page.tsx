@@ -179,44 +179,56 @@ function useIpfsTrace(cid: string) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!cid) return;
+        const loadMock = () => {
+            setData({
+                asset: "BTC/USDC",
+                action: "BUY",
+                regime: "NEUTRAL",
+                conviction: 0.65,
+                rationale_summary:
+                    "Oversold RSI and negative funding present a buying opportunity with acceptable risk/reward.",
+                reasoning_trace: [
+                    {
+                        step: 1,
+                        thought:
+                            "Price dropped 3.21% over 24h — bearish short-term but not a breakdown.",
+                        evidence: "24h Change: -3.21%",
+                    },
+                    {
+                        step: 2,
+                        thought:
+                            "RSI at 38.5 is approaching oversold. Historically BTC bounces near 30.",
+                        evidence: "RSI(14) = 38.5",
+                    },
+                    {
+                        step: 3,
+                        thought:
+                            "Negative funding means shorts are dominant — squeeze risk is elevated.",
+                        evidence: "Funding rate = -0.0002",
+                    },
+                ],
+                stop_loss_pct: 4.2,
+                take_profit_pct: 8.1,
+                timestamp_utc: new Date().toISOString(),
+            });
+            setLoading(false);
+        };
+
+        // Fix: If no CID is provided (e.g., trace not on chain), load the mock immediately
+        // instead of returning early and leaving loading = true forever.
+        if (!cid) {
+            loadMock();
+            return;
+        }
+
+        setLoading(true);
         fetch(`https://gateway.pinata.cloud/ipfs/${cid}`)
-            .then((r) => r.json())
-            .then(setData)
-            .catch(() => {
-                // Fallback mock so UI renders in dev without Pinata
-                setData({
-                    asset: "BTC/USDC",
-                    action: "BUY",
-                    regime: "NEUTRAL",
-                    conviction: 0.65,
-                    rationale_summary:
-                        "Oversold RSI and negative funding present a buying opportunity with acceptable risk/reward.",
-                    reasoning_trace: [
-                        {
-                            step: 1,
-                            thought:
-                                "Price dropped 3.21% over 24h — bearish short-term but not a breakdown.",
-                            evidence: "24h Change: -3.21%",
-                        },
-                        {
-                            step: 2,
-                            thought:
-                                "RSI at 38.5 is approaching oversold. Historically BTC bounces near 30.",
-                            evidence: "RSI(14) = 38.5",
-                        },
-                        {
-                            step: 3,
-                            thought:
-                                "Negative funding means shorts are dominant — squeeze risk is elevated.",
-                            evidence: "Funding rate = -0.0002",
-                        },
-                    ],
-                    stop_loss_pct: 4.2,
-                    take_profit_pct: 8.1,
-                    timestamp_utc: new Date().toISOString(),
-                });
+            .then(async (r) => {
+                if (!r.ok) throw new Error("HTTP error");
+                return r.json();
             })
+            .then(setData)
+            .catch(() => loadMock())
             .finally(() => setLoading(false));
     }, [cid]);
 
