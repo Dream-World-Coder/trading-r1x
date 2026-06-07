@@ -1,5 +1,3 @@
-<video src="https://raw.githubusercontent.com/Dream-World-Coder/trading-r1x/main/demo/trading-r1x-demo-subtitled-slowed.mp4" controls width="300px"></video>
-
 # Trading-R1: A Decentralised Prediction Market for AI Reasoning Traces
 
 ## What This Is
