@@ -1,0 +1,16 @@
+{
+  "trace_id": "9b5540608645fbbc8018964fc695d779b78ad7908b2c00c0a750f31b902337fe",
+  "asset": "ARB/USDC",
+  "action": "BUY",
+  "conviction": 0.62,
+  "data_source": "live",
+  "sha256_hex": "437e20be00fbedf39059c3712b7f09e2fb21b4376512d0898445b55decb64ccb",
+  "ipfs_cid": "bafkreifzhjv26amf6crqvat6djz47o3l5qxxfjpnyrtgjoq6w4u6d3hxfa",
+  "ipfs_url": "https://gateway.pinata.cloud/ipfs/bafkreifzhjv26amf6crqvat6djz47o3l5qxxfjpnyrtgjoq6w4u6d3hxfa",
+  "tx_hash": "5b4b830289b75f712b1573cf8c8899df06d2c00d49793615977608f254636299",
+  "block_number": 45693276,
+  "contract_address": "0xb25b94C6A080e1BAD6DaFc1A00A49821AA431c7c",
+  "waging_deadline": "2026-06-06T21:05:16.891702+00:00",
+  "resolution_deadline": "2026-06-13T21:05:16.891702+00:00",
+  "registered_at_utc": "2026-06-05T21:05:09.109759+00:00"
+}

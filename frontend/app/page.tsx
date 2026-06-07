@@ -1,98 +1,46 @@
 /**
  * app/page.tsx — Marketplace Listing
  *
- * Production: replace MOCK_TRACES with a TheGraph query indexing TraceRegistered events.
- * For demo: uses static mock data + the one real trace from your pipeline_receipt.json.
+ * Fetches traces from /api/traces (MongoDB) instead of MOCK_TRACES.
+ * All UI components are unchanged.
  *
- * All data logic and state is unchanged — only visual layer updated.
+ * On-chain pool values (profitPool / lossPool) are returned as "0" from the
+ * API because they live on Arc L1, not in MongoDB. Two options to enrich:
+ *   A. Read them in the API route using viem's publicClient.readContract()
+ *      (adds ~200 ms latency but keeps the page fully server-driven).
+ *   B. Read them client-side with wagmi's useReadContract() per card
+ *      (better for live updates, more complex).
+ * For now, the bar shows a 50/50 split when both pools are zero.
  */
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { formatUnits } from "viem";
 import WalletButton from "@/components/WalletButton";
+import type { ApiTrace } from "./api/traces/route";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+// TraceStatus is derived client-side from status + wagingDeadline
 type TraceStatus = "OPEN" | "PENDING" | "RESOLVED_WIN" | "RESOLVED_LOSS";
 type FilterTab = "ALL" | "OPEN" | "RESOLVED";
 
-interface MockTrace {
-    hash: string;
-    asset: string;
-    action: "BUY" | "SELL" | "HOLD";
-    regime: string;
-    conviction: number;
-    rationale: string;
-    profitPool: bigint;
-    lossPool: bigint;
-    wagingDeadline: number;
-    status: TraceStatus;
-    ipfsCid: string;
+interface DisplayTrace extends ApiTrace {
+    derivedStatus: TraceStatus;
+    profitPoolBig: bigint;
+    lossPoolBig: bigint;
 }
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
+// ─── Status derivation ────────────────────────────────────────────────────────
 
-const MOCK_TRACES: MockTrace[] = [
-    {
-        hash: "6545bd6d1bf45d95e010866f9e1b4d86b2a91e8182684ff3666e12a03427c33f",
-        asset: "BTC/USDC",
-        action: "BUY",
-        regime: "NEUTRAL",
-        conviction: 0.65,
-        rationale:
-            "Short-term bearish trend combined with oversold RSI suggests a potential buying opportunity.",
-        profitPool: BigInt("1240000000"),
-        lossPool: BigInt("380000000"),
-        wagingDeadline: Math.floor(Date.now() / 1000) + 3600 * 18,
-        status: "OPEN",
-        ipfsCid: "bafkreif744otaxvo724cc6wvux7ckcbquweltqnwmyn24s5qldglxiadmy",
-    },
-    {
-        hash: "a3f9d2c1e4b5f8a7d6c3b2a1e9f8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0",
-        asset: "ETH/USDC",
-        action: "HOLD",
-        regime: "HIGH_VOL_UNCERTAIN",
-        conviction: 0.58,
-        rationale:
-            "Elevated volatility and mixed signals across momentum, funding, and sentiment favour capital preservation.",
-        profitPool: BigInt("890000000"),
-        lossPool: BigInt("1100000000"),
-        wagingDeadline: Math.floor(Date.now() / 1000) - 3600 * 2,
-        status: "PENDING",
-        ipfsCid: "bafkreiexamplecideth",
-    },
-    {
-        hash: "b7e2f1a0d9c8b7a6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2",
-        asset: "SOL/USDC",
-        action: "BUY",
-        regime: "RISK_ON",
-        conviction: 0.78,
-        rationale:
-            "Strong momentum with positive funding and bullish sentiment provides favourable risk/reward for a long position.",
-        profitPool: BigInt("3200000000"),
-        lossPool: BigInt("600000000"),
-        wagingDeadline: Math.floor(Date.now() / 1000) - 3600 * 48,
-        status: "RESOLVED_WIN",
-        ipfsCid: "bafkreiexamplecidsol",
-    },
-    {
-        hash: "c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3",
-        asset: "ARB/USDC",
-        action: "SELL",
-        regime: "RISK_OFF",
-        conviction: 0.71,
-        rationale:
-            "Weak volume confirmation and negative sentiment signal downside risk warrants a short position.",
-        profitPool: BigInt("540000000"),
-        lossPool: BigInt("2100000000"),
-        wagingDeadline: Math.floor(Date.now() / 1000) - 3600 * 72,
-        status: "RESOLVED_LOSS",
-        ipfsCid: "bafkreiexamplecidarb",
-    },
-];
+function deriveStatus(trace: ApiTrace): TraceStatus {
+    const now = Math.floor(Date.now() / 1000);
+    if (trace.status === "resolved") return "RESOLVED_WIN"; // wasProfitable not in receipt yet
+    if (trace.wagingDeadline > now) return "OPEN";
+    return "PENDING";
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -109,7 +57,7 @@ function timeRemaining(deadline: number): string {
     return `${h}h ${m}m`;
 }
 
-// ─── Action config ────────────────────────────────────────────────────────────
+// ─── Action / status style config (unchanged) ─────────────────────────────────
 
 const ACTION_STYLE: Record<
     "BUY" | "SELL" | "HOLD",
@@ -166,15 +114,15 @@ const STATUS_CONFIG: Record<
     },
 };
 
-// ─── Trace Card ───────────────────────────────────────────────────────────────
+// ─── Trace Card (unchanged structure) ────────────────────────────────────────
 
-function TraceCard({ trace }: { trace: MockTrace }) {
-    const total = trace.profitPool + trace.lossPool;
+function TraceCard({ trace }: { trace: DisplayTrace }) {
+    const total = trace.profitPoolBig + trace.lossPoolBig;
     const profitPct =
-        total > 0n ? Number((trace.profitPool * 100n) / total) : 50;
+        total > 0n ? Number((trace.profitPoolBig * 100n) / total) : 50;
     const action = ACTION_STYLE[trace.action];
-    const status = STATUS_CONFIG[trace.status];
-    const isOpen = trace.status === "OPEN";
+    const status = STATUS_CONFIG[trace.derivedStatus];
+    const isOpen = trace.derivedStatus === "OPEN";
 
     return (
         <Link
@@ -186,7 +134,6 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                 {/* Header row */}
                 <div className="flex items-start justify-between gap-4 mb-4">
                     <div className="flex-1 min-w-0">
-                        {/* Hash + action badge */}
                         <div className="flex items-center gap-2 mb-1.5">
                             <span
                                 className="mono-xs"
@@ -204,9 +151,21 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                             >
                                 {trace.action}
                             </span>
+                            {trace.dataSource === "live" && (
+                                <span
+                                    className="badge"
+                                    style={{
+                                        color: "var(--accent-mid)",
+                                        borderColor: "var(--accent-mid)",
+                                        background: "transparent",
+                                        opacity: 0.7,
+                                    }}
+                                >
+                                    live
+                                </span>
+                            )}
                         </div>
 
-                        {/* Asset name */}
                         <h3
                             className="text-lg font-semibold mb-1 leading-tight"
                             style={{
@@ -217,7 +176,6 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                             {trace.asset}
                         </h3>
 
-                        {/* Rationale */}
                         <p
                             className="text-sm leading-relaxed line-clamp-2"
                             style={{
@@ -226,11 +184,13 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                                 fontStyle: "italic",
                             }}
                         >
-                            {trace.rationale}
+                            {/* rationale comes from IPFS — fetched in detail page */}
+                            {trace.rationale ||
+                                "Open trace detail to view full reasoning chain."}
                         </p>
                     </div>
 
-                    {/* Conviction score */}
+                    {/* Conviction */}
                     <div className="shrink-0 text-right">
                         <div
                             className="text-2xl font-bold leading-none"
@@ -251,7 +211,7 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                     </div>
                 </div>
 
-                {/* Pool distribution */}
+                {/* Pool bar */}
                 <div className="mb-3">
                     <div
                         className="flex justify-between mb-1.5"
@@ -261,8 +221,8 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                             color: "var(--ink-4)",
                         }}
                     >
-                        <span>↑ {formatUsdc(trace.profitPool)} USDC</span>
-                        <span>↓ {formatUsdc(trace.lossPool)} USDC</span>
+                        <span>↑ {formatUsdc(trace.profitPoolBig)} USDC</span>
+                        <span>↓ {formatUsdc(trace.lossPoolBig)} USDC</span>
                     </div>
                     <div
                         className="h-1 w-full rounded-full overflow-hidden"
@@ -279,9 +239,8 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                     </div>
                 </div>
 
-                {/* Footer row */}
+                {/* Footer */}
                 <div className="rule pt-3 flex items-center justify-between">
-                    {/* Status badge */}
                     <span
                         className="badge"
                         style={{
@@ -299,7 +258,6 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                         {status.label}
                     </span>
 
-                    {/* Meta */}
                     <div
                         className="flex items-center gap-3"
                         style={{
@@ -309,7 +267,10 @@ function TraceCard({ trace }: { trace: MockTrace }) {
                         }}
                     >
                         <span>
-                            ${formatUsdc(trace.profitPool + trace.lossPool)}{" "}
+                            $
+                            {formatUsdc(
+                                trace.profitPoolBig + trace.lossPoolBig,
+                            )}{" "}
                             pool
                         </span>
                         {isOpen && (
@@ -325,28 +286,111 @@ function TraceCard({ trace }: { trace: MockTrace }) {
     );
 }
 
+// ─── Loading skeleton ─────────────────────────────────────────────────────────
+
+function CardSkeleton() {
+    return (
+        <div className="card rounded-sm p-5 animate-pulse">
+            <div className="flex justify-between mb-4">
+                <div className="space-y-2 flex-1">
+                    <div
+                        className="h-3 w-24 rounded"
+                        style={{ background: "var(--paper-grid)" }}
+                    />
+                    <div
+                        className="h-5 w-32 rounded"
+                        style={{ background: "var(--paper-grid)" }}
+                    />
+                    <div
+                        className="h-3 w-full rounded"
+                        style={{ background: "var(--paper-grid)" }}
+                    />
+                </div>
+                <div
+                    className="h-8 w-12 rounded ml-4"
+                    style={{ background: "var(--paper-grid)" }}
+                />
+            </div>
+            <div
+                className="h-1 w-full rounded"
+                style={{ background: "var(--paper-grid)" }}
+            />
+        </div>
+    );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MarketplacePage() {
     const [filter, setFilter] = useState<FilterTab>("ALL");
+    const [traces, setTraces] = useState<DisplayTrace[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    const filtered = MOCK_TRACES.filter((t) => {
+    // ── Fetch from /api/traces on mount ───────────────────────────────
+    useEffect(() => {
+        let cancelled = false;
+
+        async function load() {
+            try {
+                setLoading(true);
+                setError(null);
+
+                const res = await fetch("/api/traces");
+                if (!res.ok) throw new Error(`API returned ${res.status}`);
+
+                const { traces: raw }: { traces: ApiTrace[] } =
+                    await res.json();
+
+                if (!cancelled) {
+                    setTraces(
+                        raw.map((t) => ({
+                            ...t,
+                            derivedStatus: deriveStatus(t),
+                            profitPoolBig: BigInt(t.profitPool),
+                            lossPoolBig: BigInt(t.lossPool),
+                        })),
+                    );
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    console.error("[MarketplacePage] fetch error:", err);
+                    setError(
+                        "Could not load traces. Check that MONGODB_URI is set and the API route is reachable.",
+                    );
+                }
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        }
+
+        load();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // ── Derived counts ────────────────────────────────────────────────
+    const filtered = traces.filter((t) => {
         if (filter === "OPEN")
-            return t.status === "OPEN" || t.status === "PENDING";
+            return t.derivedStatus === "OPEN" || t.derivedStatus === "PENDING";
         if (filter === "RESOLVED")
-            return t.status === "RESOLVED_WIN" || t.status === "RESOLVED_LOSS";
+            return (
+                t.derivedStatus === "RESOLVED_WIN" ||
+                t.derivedStatus === "RESOLVED_LOSS"
+            );
         return true;
     });
 
-    const openCount = MOCK_TRACES.filter(
-        (t) => t.status === "OPEN" || t.status === "PENDING",
+    const openCount = traces.filter(
+        (t) => t.derivedStatus === "OPEN" || t.derivedStatus === "PENDING",
     ).length;
-
-    const totalWagered = MOCK_TRACES.reduce(
-        (s, t) => s + t.profitPool + t.lossPool,
+    const totalWagered = traces.reduce(
+        (s, t) => s + t.profitPoolBig + t.lossPoolBig,
         0n,
     );
 
+    // ── Render ────────────────────────────────────────────────────────
     return (
         <div className="min-h-screen" style={{ background: "var(--paper)" }}>
             {/* Header */}
@@ -359,7 +403,6 @@ export default function MarketplacePage() {
                 }}
             >
                 <div className="mx-auto max-w-5xl px-6 py-3 flex items-center justify-between">
-                    {/* Wordmark */}
                     <div className="flex items-center gap-3">
                         <span
                             className="font-bold tracking-tight"
@@ -389,7 +432,7 @@ export default function MarketplacePage() {
             </header>
 
             <main className="mx-auto max-w-5xl px-6 py-10">
-                {/* Page header — research paper style */}
+                {/* Page header */}
                 <div
                     className="mb-8 pb-6"
                     style={{ borderBottom: "1px solid var(--paper-rule)" }}
@@ -423,11 +466,19 @@ export default function MarketplacePage() {
                     style={{ borderColor: "var(--paper-rule)" }}
                 >
                     {[
-                        { label: "Total Traces", value: MOCK_TRACES.length },
-                        { label: "Open Markets", value: openCount },
+                        {
+                            label: "Total Traces",
+                            value: loading ? "—" : traces.length,
+                        },
+                        {
+                            label: "Open Markets",
+                            value: loading ? "—" : openCount,
+                        },
                         {
                             label: "Total Wagered",
-                            value: `$${formatUsdc(totalWagered)}`,
+                            value: loading
+                                ? "—"
+                                : `$${formatUsdc(totalWagered)}`,
                         },
                     ].map(({ label, value }) => (
                         <div
@@ -465,8 +516,36 @@ export default function MarketplacePage() {
                     ))}
                 </div>
 
+                {/* Error state */}
+                {error && (
+                    <div
+                        className="rounded-sm border p-5 mb-5"
+                        style={{
+                            borderColor: "var(--red-border)",
+                            background: "var(--red-bg)",
+                            color: "var(--red)",
+                        }}
+                    >
+                        <p className="mono-xs font-semibold mb-1">
+                            Failed to load traces
+                        </p>
+                        <p
+                            className="text-sm"
+                            style={{ color: "var(--ink-3)" }}
+                        >
+                            {error}
+                        </p>
+                    </div>
+                )}
+
                 {/* Cards grid */}
-                {filtered.length === 0 ? (
+                {loading ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        {[1, 2, 3, 4].map((i) => (
+                            <CardSkeleton key={i} />
+                        ))}
+                    </div>
+                ) : filtered.length === 0 ? (
                     <div
                         className="rounded-sm border py-20 text-center"
                         style={{
@@ -474,7 +553,11 @@ export default function MarketplacePage() {
                             borderColor: "var(--paper-rule)",
                         }}
                     >
-                        <p className="label">No traces in this filter.</p>
+                        <p className="label">
+                            {error
+                                ? "Could not load traces."
+                                : "No traces in this filter."}
+                        </p>
                     </div>
                 ) : (
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -489,12 +572,11 @@ export default function MarketplacePage() {
                     className="mt-10 text-center mono-xs"
                     style={{ color: "var(--ink-5)" }}
                 >
-                    Production: replace mock data with a TheGraph subgraph
-                    indexing{" "}
+                    Data from MongoDB · receipts collection · sorted by{" "}
                     <code style={{ color: "var(--ink-4)" }}>
-                        TraceRegistered
-                    </code>{" "}
-                    events. Contract:{" "}
+                        created_at desc
+                    </code>
+                    . Contract:{" "}
                     <a
                         href="https://testnet.arcscan.app/address/0xb25b94C6A080e1BAD6DaFc1A00A49821AA431c7c"
                         target="_blank"

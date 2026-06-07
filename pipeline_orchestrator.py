@@ -1,10 +1,11 @@
 """
-Trading-R1: Pipeline Orchestrator (OOP Refactor)
-=================================================
-Modular class-based design. Three main classes:
+Trading-R1: Pipeline Orchestrator (OOP Refactor + Persistent Storage)
+======================================================================
+Modular class-based design. Four main classes:
 
     PipelineConfig      — all runtime settings in one place
     MarketDataFetcher   — live API data or randomised synthetic signals
+    ReceiptStore        — persists receipts to disk (receipts/) + MongoDB
     TradingR1Pipeline   — chains Phase 1 → Phase 2 → Phase 3
 
 Live data sources (all free, no API key required):
@@ -12,16 +13,21 @@ Live data sources (all free, no API key required):
     Binance Futures API   — perpetual funding rate
     Derived locally       — RSI(14), 30d annualised volatility, sentiment proxy
 
+Storage:
+    receipts/{trace_id[:12]}.json   — one file per trace, named by hash prefix
+    MongoDB receipts collection      — upserted by trace_id (_id), ready for Next.js
+
 Usage:
     python pipeline_orchestrator.py                        # dry run, random data
     python pipeline_orchestrator.py --live-data            # live CoinGecko prices
     python pipeline_orchestrator.py --asset ETH/USDC       # specific asset
-    python pipeline_orchestrator.py --live-llm --pinata --broadcast
+    python pipeline_orchestrator.py --live-llm --pinata --broadcast --live-data
     python pipeline_orchestrator.py --continuous           # loop every 5 min
     python pipeline_orchestrator.py --continuous --live-data
 """
 
 import json
+import logging
 import math
 import os
 import random
@@ -38,11 +44,26 @@ from dotenv import load_dotenv
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
+
+    _MONGO_AVAILABLE = True
+except ImportError:
+    _MONGO_AVAILABLE = False
+
 sys.path.insert(0, str(Path(__file__).parent))
 from phase1_reasoning_engine import MarketSignal, generate_reasoning_trace
 from phase2_storage_pipeline import process_trace
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("trading-r1")
 
 # ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,7 +74,6 @@ StorageMode = Literal["pinata", "local", "mock"]
 COINGECKO_BASE = "https://api.coingecko.com/api/v3"
 BINANCE_FUTURES_BASE = "https://fapi.binance.com"
 
-# Asset name → CoinGecko ID
 COINGECKO_IDS: dict[str, str] = {
     "BTC/USDC": "bitcoin",
     "ETH/USDC": "ethereum",
@@ -61,7 +81,6 @@ COINGECKO_IDS: dict[str, str] = {
     "ARB/USDC": "arbitrum",
 }
 
-# Asset name → Binance perpetual futures symbol
 BINANCE_SYMBOLS: dict[str, str] = {
     "BTC/USDC": "BTCUSDT",
     "ETH/USDC": "ETHUSDT",
@@ -160,7 +179,13 @@ class PipelineConfig:
 
 @dataclass
 class PipelineReceipt:
-    """Complete receipt linking every layer of the pipeline."""
+    """
+    Complete receipt linking every layer of the pipeline.
+
+    Extra fields vs the original:
+        status      — "open" on creation; frontend can update to "resolved"
+        created_at  — Python datetime object (used as proper BSON date in Mongo)
+    """
 
     trace_id: str  # deterministic SHA-256 of the input signal
     asset: str
@@ -178,15 +203,151 @@ class PipelineReceipt:
     block_number: int
     contract_address: str
 
-    # Deadlines
-    waging_deadline: str  # ISO UTC
+    # Deadlines (ISO UTC strings — easy to serialise everywhere)
+    waging_deadline: str
     resolution_deadline: str
     registered_at_utc: str
 
-    def save(self, path: str) -> None:
+    # Lifecycle — used by the Next.js frontend to filter cards
+    status: str = "open"  # "open" | "resolved"
+
+
+# ─── Receipt Store ────────────────────────────────────────────────────────────
+
+
+class ReceiptStore:
+    """
+    Persists a PipelineReceipt to two destinations:
+
+        1. receipts/{trace_id[:12]}.json   — local disk, one file per trace
+        2. MongoDB receipts collection      — upserted by trace_id as _id
+
+    Naming receipts by hash prefix (not a counter) means:
+        - Re-running the same signal won't create duplicate files
+        - You can look up a file with the same ID that's on-chain
+        - Safe to run on multiple machines simultaneously
+
+    MongoDB writes are best-effort: if the URI is not set or the write
+    fails, a warning is logged but the pipeline does NOT crash.
+    The trace is already on-chain and on disk — Mongo is a read cache.
+    """
+
+    COLLECTION = "receipts"
+
+    def __init__(
+        self,
+        receipts_dir: str = "receipts",
+        mongo_uri: Optional[str] = None,
+        db_name: str = "trading_r1",
+    ):
+        self.receipts_dir = Path(receipts_dir)
+        self.receipts_dir.mkdir(parents=True, exist_ok=True)
+
+        self._mongo_client = None
+        self._collection = None
+
+        if mongo_uri and _MONGO_AVAILABLE:
+            try:
+                self._mongo_client = MongoClient(
+                    mongo_uri, serverSelectionTimeoutMS=5_000
+                )
+                # Ping to validate connection before the first real write
+                self._mongo_client.admin.command("ping")
+                self._collection = self._mongo_client[db_name][self.COLLECTION]
+                log.info(
+                    "MongoDB connected  db=%s  collection=%s", db_name, self.COLLECTION
+                )
+            except Exception as exc:
+                log.warning(
+                    "MongoDB connection failed — disk-only mode. Reason: %s", exc
+                )
+                self._mongo_client = None
+                self._collection = None
+        elif mongo_uri and not _MONGO_AVAILABLE:
+            log.warning(
+                "MONGO_URI is set but pymongo is not installed. "
+                "Run: pip install pymongo  — falling back to disk-only."
+            )
+
+    # ── Public ───────────────────────────────────────────────────────
+
+    def persist(self, receipt: PipelineReceipt) -> Path:
+        """
+        Save receipt to disk and MongoDB (if available).
+        Always returns the disk path so callers can log it.
+        """
+        disk_path = self._save_to_disk(receipt)
+        self._save_to_mongo(receipt)  # soft failure — never raises
+        return disk_path
+
+    def close(self) -> None:
+        """Close the MongoDB connection cleanly."""
+        if self._mongo_client:
+            self._mongo_client.close()
+
+    # ── Private: disk ────────────────────────────────────────────────
+
+    def _save_to_disk(self, receipt: PipelineReceipt) -> Path:
+        """
+        Write to receipts/{trace_id[:12]}.json.
+        Uses the hash prefix so the filename is deterministic and collision-proof.
+        """
+        filename = f"{receipt.trace_id[:12]}.json"
+        path = self.receipts_dir / filename
+
         with open(path, "w") as f:
-            json.dump(asdict(self), f, indent=2)
-        print(f"Receipt saved → {path}")
+            json.dump(asdict(receipt), f, indent=2)
+
+        log.info("Receipt saved to disk  → %s", path)
+        return path
+
+    # ── Private: MongoDB ─────────────────────────────────────────────
+
+    def _save_to_mongo(self, receipt: PipelineReceipt) -> None:
+        """
+        Upsert into MongoDB using trace_id as _id.
+        Idempotent: running the same signal twice does not create duplicates.
+        Never raises — failures are logged as warnings only.
+        """
+        if self._collection is None:
+            return
+
+        try:
+            doc = self._to_mongo_doc(receipt)
+            self._collection.replace_one(
+                {"_id": doc["_id"]},
+                doc,
+                upsert=True,
+            )
+            log.info("Receipt upserted to MongoDB  _id=%s", doc["_id"][:12])
+        except PyMongoError as exc:
+            log.warning("MongoDB write failed (disk copy is safe). Reason: %s", exc)
+        except Exception as exc:
+            log.warning("Unexpected error during MongoDB write: %s", exc)
+
+    @staticmethod
+    def _to_mongo_doc(receipt: PipelineReceipt) -> dict:
+        """
+        Convert a PipelineReceipt to a MongoDB document.
+
+        Key decisions:
+            _id        → trace_id  (natural primary key, matches on-chain key)
+            created_at → proper datetime object so Mongo sorts/indexes correctly
+            status     → "open" by default; Next.js can $set to "resolved"
+        """
+        doc = asdict(receipt)
+
+        # Use trace_id as the document _id (Mongo primary key)
+        doc["_id"] = doc.pop("trace_id")
+
+        # Store deadlines as real datetimes so Mongo TTL indexes work later
+        doc["created_at"] = datetime.fromisoformat(receipt.registered_at_utc)
+        doc["waging_deadline_dt"] = datetime.fromisoformat(receipt.waging_deadline)
+        doc["resolution_deadline_dt"] = datetime.fromisoformat(
+            receipt.resolution_deadline
+        )
+
+        return doc
 
 
 # ─── Market Data Fetcher ──────────────────────────────────────────────────────
@@ -200,13 +361,12 @@ class MarketDataFetcher:
         fetch_random(asset)  — synthetic data with realistic value ranges
 
     Live data derivations:
-        RSI(14)              — calculated from 30-day daily closes (CoinGecko OHLC)
-        volatility_30d       — annualised log-return std dev over 30 days
-        funding_rate         — latest perpetual rate from Binance Futures
-        sentiment_score      — proxy: normalised price momentum + RSI deviation
+        RSI(14)       — calculated from 30-day daily closes (CoinGecko OHLC)
+        volatility    — annualised log-return std dev over 30 days
+        funding_rate  — latest perpetual rate from Binance Futures
+        sentiment     — proxy: normalised price momentum + RSI deviation
     """
 
-    # Realistic price ranges per asset (lo, hi) in USD
     _PRICE_RANGES: dict[str, tuple[float, float]] = {
         "BTC/USDC": (20_000.0, 100_000.0),
         "ETH/USDC": (1_000.0, 6_000.0),
@@ -214,7 +374,6 @@ class MarketDataFetcher:
         "ARB/USDC": (0.30, 3.0),
     }
 
-    # Realistic 24h volume ranges per asset
     _VOLUME_RANGES: dict[str, tuple[float, float]] = {
         "BTC/USDC": (10e9, 60e9),
         "ETH/USDC": (5e9, 30e9),
@@ -222,7 +381,6 @@ class MarketDataFetcher:
         "ARB/USDC": (100e6, 2e9),
     }
 
-    # Generic scalar ranges shared across assets
     _SCALAR_RANGES = {
         "price_change_24h_pct": (-8.0, 8.0),
         "volatility_30d": (0.30, 0.90),
@@ -231,34 +389,21 @@ class MarketDataFetcher:
         "sentiment_score": (-0.8, 0.8),
     }
 
-    # ── Public interface ─────────────────────────────────────────────
+    # ── Public ───────────────────────────────────────────────────────
 
     def fetch_live(self, asset: str) -> MarketSignal:
-        """
-        Pull real market data for `asset` from free public APIs.
-        Falls back gracefully on individual field failures (e.g. rate limit).
-        """
+        """Pull real market data for `asset` from free public APIs."""
         if asset not in COINGECKO_IDS:
-            raise ValueError(
-                f"Unsupported asset '{asset}'. Choose from: {SUPPORTED_ASSETS}"
-            )
+            raise ValueError(f"Unsupported asset '{asset}'. Choose: {SUPPORTED_ASSETS}")
 
         cg_id = COINGECKO_IDS[asset]
-        print(f"   Fetching live data for {asset} (CoinGecko id={cg_id})…")
+        log.info("Fetching live data  asset=%s  coingecko_id=%s", asset, cg_id)
 
-        # --- Spot price, 24 h change, volume ---
         spot = self._fetch_spot(cg_id)
-
-        # --- 30-day OHLC closes for RSI + volatility ---
         closes = self._fetch_ohlc_closes(cg_id, days=30)
-
         rsi_14 = self._rsi(closes, period=14)
         volatility = self._annualised_vol(closes)
-
-        # --- Perpetual funding rate ---
         funding_rate = self._fetch_funding_rate(asset)
-
-        # --- Derived sentiment proxy ---
         sentiment = self._sentiment_proxy(spot["price_change_24h_pct"], rsi_14)
 
         return MarketSignal(
@@ -273,10 +418,7 @@ class MarketDataFetcher:
         )
 
     def fetch_random(self, asset: Optional[str] = None) -> MarketSignal:
-        """
-        Generate a randomised but realistically bounded MarketSignal.
-        If `asset` is None, a random supported asset is chosen.
-        """
+        """Generate a realistically bounded random MarketSignal."""
         asset = asset or random.choice(SUPPORTED_ASSETS)
         r = self._SCALAR_RANGES
 
@@ -294,7 +436,6 @@ class MarketDataFetcher:
     # ── Private: API calls ───────────────────────────────────────────
 
     def _fetch_spot(self, cg_id: str) -> dict:
-        """Returns price_usd, price_change_24h_pct, volume_24h_usd."""
         url = f"{COINGECKO_BASE}/coins/markets"
         params = {
             "vs_currency": "usd",
@@ -311,19 +452,13 @@ class MarketDataFetcher:
         }
 
     def _fetch_ohlc_closes(self, cg_id: str, days: int = 30) -> list[float]:
-        """
-        Returns a list of daily close prices from CoinGecko OHLC.
-        Each row is [timestamp, open, high, low, close].
-        """
         url = f"{COINGECKO_BASE}/coins/{cg_id}/ohlc"
         params = {"vs_currency": "usd", "days": str(days)}
         resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
-        rows = resp.json()  # [[ts, o, h, l, c], ...]
-        return [row[4] for row in rows]  # close prices only
+        return [row[4] for row in resp.json()]  # close price only
 
     def _fetch_funding_rate(self, asset: str) -> float:
-        """Latest perpetual funding rate from Binance Futures (public endpoint)."""
         symbol = BINANCE_SYMBOLS.get(asset)
         if not symbol:
             return 0.0
@@ -334,16 +469,15 @@ class MarketDataFetcher:
             rows = resp.json()
             return float(rows[0]["fundingRate"]) if rows else 0.0
         except Exception:
-            # Binance may block certain regions; fall back to a small random value
+            # Binance blocks some regions — fall back silently
             return round(random.uniform(-0.0003, 0.0003), 6)
 
-    # ── Private: Calculations ────────────────────────────────────────
+    # ── Private: calculations ────────────────────────────────────────
 
     @staticmethod
     def _rsi(closes: list[float], period: int = 14) -> float:
-        """Wilder RSI from a sequence of closing prices."""
         if len(closes) < period + 1:
-            return 50.0  # neutral fallback on insufficient history
+            return 50.0
         deltas = [closes[i + 1] - closes[i] for i in range(len(closes) - 1)]
         gains = [max(d, 0.0) for d in deltas]
         losses = [abs(min(d, 0.0)) for d in deltas]
@@ -356,7 +490,6 @@ class MarketDataFetcher:
 
     @staticmethod
     def _annualised_vol(closes: list[float]) -> float:
-        """30-day log-return standard deviation, annualised (×√365)."""
         if len(closes) < 2:
             return 0.50
         log_returns = [
@@ -370,11 +503,6 @@ class MarketDataFetcher:
 
     @staticmethod
     def _sentiment_proxy(price_change_pct: float, rsi: float) -> float:
-        """
-        Naive sentiment estimate in [-1, +1]:
-            momentum   = price_change clamped to ±10 %, scaled to ±0.5
-            rsi_signal = RSI deviation from 50, scaled to ±0.5
-        """
         momentum = max(-0.5, min(0.5, price_change_pct / 10.0 * 0.5))
         rsi_signal = max(-0.5, min(0.5, (rsi - 50.0) / 50.0 * 0.5))
         return round(momentum + rsi_signal, 4)
@@ -394,31 +522,29 @@ class TradingR1Pipeline:
         Phase 1  generate_reasoning_trace()  →  ReasoningTrace JSON
         Phase 2  process_trace()             →  StorageReceipt (SHA-256 + CID)
         Phase 3  _register_on_chain()        →  Arc L1 tx hash
+        Store    ReceiptStore.persist()      →  disk + MongoDB
 
     Typical usage:
         config   = PipelineConfig.for_dry_run()
-        pipeline = TradingR1Pipeline(config)
+        store    = ReceiptStore(mongo_uri=os.getenv("MONGO_URI"))
+        pipeline = TradingR1Pipeline(config, store)
 
-        # one-shot with live data
         receipt = pipeline.run_with_live_data("BTC/USDC")
-
-        # one-shot with random data
         receipt = pipeline.run_with_random_data()
-
-        # loop
         pipeline.run_continuous(interval_seconds=300, use_live=True)
     """
 
     MARKET_ABI = _MARKET_ABI
 
-    def __init__(self, config: PipelineConfig):
+    def __init__(self, config: PipelineConfig, store: Optional["ReceiptStore"] = None):
         self.config = config
+        self.store = store
         self.fetcher = MarketDataFetcher()
 
     # ── Public entry points ──────────────────────────────────────────
 
     def run(self, signal: MarketSignal, data_source: str = "manual") -> PipelineReceipt:
-        """Execute Phases 1 → 2 → 3 for an already-constructed signal."""
+        """Execute Phases 1 → 2 → 3 → Store for a given signal."""
         now = datetime.now(timezone.utc)
         cfg = self.config
 
@@ -438,17 +564,23 @@ class TradingR1Pipeline:
         print(f"\n[Phase 3] Registering on Arc L1 (dry_run={cfg.dry_run})…")
         on_chain = self._register_on_chain(storage.sha256_hex, storage.ipfs_cid)
 
+        # Build receipt
         receipt = self._build_receipt(trace, storage, on_chain, now, data_source)
         self._print_receipt_summary(receipt)
+
+        # Persist — disk always, MongoDB if configured
+        if self.store:
+            print("\n[Store] Persisting receipt…")
+            disk_path = self.store.persist(receipt)
+            print(f"        Disk  → {disk_path}")
+
         return receipt
 
     def run_with_live_data(self, asset: str) -> PipelineReceipt:
-        """Fetch live market data then run the full pipeline."""
         signal = self.fetcher.fetch_live(asset)
         return self.run(signal, data_source="live")
 
     def run_with_random_data(self, asset: Optional[str] = None) -> PipelineReceipt:
-        """Generate a random signal then run the full pipeline."""
         signal = self.fetcher.fetch_random(asset)
         return self.run(signal, data_source="random")
 
@@ -459,40 +591,33 @@ class TradingR1Pipeline:
         asset: Optional[str] = None,
     ) -> None:
         """
-        Loop forever, cycling through assets, saving one receipt per run.
+        Loop forever — new trace on every interval.
+        ReceiptStore handles all persistence; no manual file saving here.
         Continues even if an individual iteration fails.
-
-        Args:
-            interval_seconds: Sleep between iterations (default 5 min).
-            use_live:         True = live CoinGecko data; False = random.
-            asset:            Pin to a specific asset; None = rotate randomly.
         """
         mode_label = "live" if use_live else "random"
-        print(f"Continuous mode | data={mode_label} | interval={interval_seconds}s")
+        log.info("Continuous mode  data=%s  interval=%ds", mode_label, interval_seconds)
         run_count = 0
 
         while True:
             run_count += 1
             chosen_asset = asset or random.choice(SUPPORTED_ASSETS)
-            print(f"\n{'─' * 50}")
+            print(f"\n{'─' * 52}")
             print(
-                f"Run #{run_count:04d} | {chosen_asset} | {datetime.now(timezone.utc).isoformat()}"
+                f"  Run #{run_count:04d}  |  {chosen_asset}  |  "
+                f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
             )
-            print(f"{'─' * 50}")
+            print(f"{'─' * 52}")
 
             try:
                 if use_live:
-                    receipt = self.run_with_live_data(chosen_asset)
+                    self.run_with_live_data(chosen_asset)
                 else:
-                    receipt = self.run_with_random_data(chosen_asset)
-
-                out_path = f"pipeline_receipt_{run_count:04d}.json"
-                receipt.save(out_path)
-
+                    self.run_with_random_data(chosen_asset)
             except Exception as exc:
-                print(f"[ERROR] Run #{run_count} failed: {exc}")
+                log.error("Run #%04d failed: %s", run_count, exc)
 
-            print(f"Sleeping {interval_seconds}s…")
+            log.info("Sleeping %ds until next run…", interval_seconds)
             time.sleep(interval_seconds)
 
     # ── Phase 3: on-chain registration ──────────────────────────────
@@ -531,7 +656,6 @@ class TradingR1Pipeline:
             print(f"[DRY RUN] Encoded calldata: {data[:66]}…")
             return {"tx_hash": "0x" + "00" * 32, "block_number": 0}
 
-        # Build → sign → send
         nonce = w3.eth.get_transaction_count(account.address)
         tx = contract.functions.registerTrace(
             hash_bytes32,
@@ -548,22 +672,19 @@ class TradingR1Pipeline:
         )
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"Tx broadcast: {tx_hash.hex()}")
+        log.info("Tx broadcast: %s", tx_hash.hex())
 
         on_chain_receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
         if on_chain_receipt.status != 1:
             raise RuntimeError(f"Transaction reverted: {on_chain_receipt}")
 
-        print(f"Confirmed in block {on_chain_receipt.blockNumber}")
-        return {
-            "tx_hash": tx_hash.hex(),
-            "block_number": on_chain_receipt.blockNumber,
-        }
+        log.info("Confirmed in block %d", on_chain_receipt.blockNumber)
+        return {"tx_hash": tx_hash.hex(), "block_number": on_chain_receipt.blockNumber}
 
     # ── Receipt builder ──────────────────────────────────────────────
 
     def _build_receipt(
-        self, trace, storage, on_chain, now: datetime, data_source: str
+        self, trace, storage, on_chain: dict, now: datetime, data_source: str
     ) -> PipelineReceipt:
         cfg = self.config
         t = time.time()
@@ -586,6 +707,7 @@ class TradingR1Pipeline:
                 t + cfg.waging_window_secs + cfg.resolution_window_secs, tz=timezone.utc
             ).isoformat(),
             registered_at_utc=now.isoformat(),
+            status="open",
         )
 
     # ── Print helpers ────────────────────────────────────────────────
@@ -631,6 +753,7 @@ class TradingR1Pipeline:
         print(f"  Tx Hash:      {receipt.tx_hash[:20]}…")
         print(f"  Block:        {receipt.block_number}")
         print(f"  Wager until:  {receipt.waging_deadline}")
+        print(f"  Status:       {receipt.status}")
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
@@ -644,39 +767,25 @@ def _build_arg_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python pipeline_orchestrator.py                          # dry run, random data
-  python pipeline_orchestrator.py --live-data              # live market prices
-  python pipeline_orchestrator.py --asset SOL/USDC         # specific asset (random data)
+  python pipeline_orchestrator.py                               # dry run, random data
+  python pipeline_orchestrator.py --live-data                   # live market prices
+  python pipeline_orchestrator.py --asset SOL/USDC              # specific asset
   python pipeline_orchestrator.py --asset ETH/USDC --live-data
-  python pipeline_orchestrator.py --live-llm --pinata --broadcast
-  python pipeline_orchestrator.py --continuous             # loop, random data
-  python pipeline_orchestrator.py --continuous --live-data # loop, live data
+  python pipeline_orchestrator.py --live-llm --pinata --broadcast --live-data
+  python pipeline_orchestrator.py --continuous                  # loop, random data
+  python pipeline_orchestrator.py --continuous --live-data      # loop, live data
         """,
     )
+    p.add_argument("--asset", choices=SUPPORTED_ASSETS, default=None)
     p.add_argument(
-        "--asset",
-        choices=SUPPORTED_ASSETS,
-        default=None,
-        help="Asset to analyse (default: random each run)",
-    )
-    p.add_argument(
-        "--live-data",
-        action="store_true",
-        help="Fetch real prices from CoinGecko instead of generating random data",
+        "--live-data", action="store_true", help="Fetch real prices from CoinGecko"
     )
     p.add_argument("--live-llm", action="store_true", help="Call real LLM API (Groq)")
     p.add_argument("--pinata", action="store_true", help="Pin to Pinata IPFS")
     p.add_argument("--broadcast", action="store_true", help="Send tx to Arc L1")
+    p.add_argument("--continuous", action="store_true", help="Loop mode")
     p.add_argument(
-        "--continuous",
-        action="store_true",
-        help="Loop mode — new trace every --interval seconds",
-    )
-    p.add_argument(
-        "--interval",
-        type=int,
-        default=300,
-        help="Seconds between runs in continuous mode (default: 300)",
+        "--interval", type=int, default=300, help="Seconds between loops (default 300)"
     )
     return p
 
@@ -691,21 +800,29 @@ def main() -> None:
         dry_run=not args.broadcast,
     )
 
-    pipeline = TradingR1Pipeline(config)
+    # ReceiptStore — wires up disk + Mongo from env vars automatically
+    store = ReceiptStore(
+        receipts_dir=os.getenv("RECEIPTS_DIR", "receipts"),
+        mongo_uri=os.getenv("MONGO_URI"),  # None → disk-only, no crash
+        db_name=os.getenv("MONGO_DB", "trading_r1"),
+    )
 
-    if args.continuous:
-        pipeline.run_continuous(
-            interval_seconds=args.interval,
-            use_live=args.live_data,
-            asset=args.asset,
-        )
-    elif args.live_data:
-        asset = args.asset or random.choice(SUPPORTED_ASSETS)
-        receipt = pipeline.run_with_live_data(asset)
-        receipt.save("pipeline_receipt.json")
-    else:
-        receipt = pipeline.run_with_random_data(args.asset)
-        receipt.save("pipeline_receipt.json")
+    pipeline = TradingR1Pipeline(config, store)
+
+    try:
+        if args.continuous:
+            pipeline.run_continuous(
+                interval_seconds=args.interval,
+                use_live=args.live_data,
+                asset=args.asset,
+            )
+        elif args.live_data:
+            asset = args.asset or random.choice(SUPPORTED_ASSETS)
+            pipeline.run_with_live_data(asset)
+        else:
+            pipeline.run_with_random_data(args.asset)
+    finally:
+        store.close()
 
 
 if __name__ == "__main__":
